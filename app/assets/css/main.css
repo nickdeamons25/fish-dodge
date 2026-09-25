@@ -1,0 +1,26 @@
+:root {
+  --bg: #04182c;
+  --text: #eaf7ff;
+  --accent: #ff9933;
+  --panel: rgb(4 30 56 / 0.55);
+  --panel-strong: rgb(6 38 68 / 0.92);
+  --radius: 16px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  background: radial-gradient(ellipse at top, #0b3a60, var(--bg) 70%);
+  color: var(--text);
+  font-family: 'Fredoka', system-ui, sans-serif;
+  min-height: 100%;
+  overscroll-behavior: none;
+}
+
+/* Stop touch-steering from scrolling or zooming the page. */
+canvas {
+  touch-action: none;
+}
