@@ -19,13 +19,26 @@ function onVisibility() {
   if (document.hidden && store.status === 'playing') store.togglePause()
 }
 
+// Long-presses and pinches on a phone would otherwise open the context menu
+// or zoom the page mid-run. Text fields keep their native behavior.
+function onContextMenu(e: Event) {
+  if ((e.target as HTMLElement)?.tagName !== 'INPUT') e.preventDefault()
+}
+function onGesture(e: Event) {
+  e.preventDefault()
+}
+
 onMounted(() => {
   window.addEventListener('keydown', onKey)
   document.addEventListener('visibilitychange', onVisibility)
+  document.addEventListener('contextmenu', onContextMenu)
+  document.addEventListener('gesturestart', onGesture)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   document.removeEventListener('visibilitychange', onVisibility)
+  document.removeEventListener('contextmenu', onContextMenu)
+  document.removeEventListener('gesturestart', onGesture)
 })
 </script>
 

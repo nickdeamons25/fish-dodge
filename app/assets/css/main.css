@@ -18,6 +18,20 @@ html, body {
   font-family: 'Fredoka', system-ui, sans-serif;
   min-height: 100%;
   overscroll-behavior: none;
+  /* It's a game, not a document: no long-press text selection, iOS callout
+     menu, tap flash, or double-tap zoom. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* Text fields still need to be selectable and editable. */
+input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
 }
 
 /* Stop touch-steering from scrolling or zooming the page. */
