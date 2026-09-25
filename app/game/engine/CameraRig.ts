@@ -165,6 +165,7 @@ export class CameraRig {
     }
   }
 
+  /* Apply the current camera state to the actual camera and fog. */
   private apply() {
     const c = this.current
     this.dir.set(0, 0, 1).applyQuaternion(c.quat)
