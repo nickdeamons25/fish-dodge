@@ -41,13 +41,18 @@ _Last updated: 2026-09-25_
 > with distance); the hazard pool is rock, jellyfish, blue fish, pufferfish and eel.
 > **Step 4 (phone tilt) done.** `engine/Input.ts` turns `deviceorientation` readings into
 > gravity in the screen's frame (so either landscape works), smoothed: tip the phone left/right
-> to turn (dead zone 3°, full at 25°), tilt the top edge toward you to rise / away to dive
-> (4°–18°, measured from the pose at the start of the run, and again after resuming from pause
-> or rotating the phone). Keys and a held finger override tilt. The menu and game-over cards
+> to turn (dead zone 3°, full at 25°), tilt the top edge away to rise / toward you to dive, like
+> a joystick (dead zone 8°, full at 30° on an ease-in curve; measured from the pose at the start
+> of the run, after resuming from pause or rotating, and slowly re-levelling over ~6 s so a
+> sagging hand doesn't drift the fish). Keys and a held finger override tilt. The menu and game-over cards
 > show a "Tilt to steer" toggle on touch devices (`components/TiltToggle.vue`; remembered in the
 > profile, on by default). iOS motion permission is requested from the Swim!/Swim again tap
 > (`utils/tilt.ts`, called in `store.startRun`); if it's refused, a note says to steer by touch.
 > Tested with synthetic readings in portrait and landscape; the real iOS prompt needs a phone.
+> **Phones play in landscape:** held upright, a "Turn your phone sideways" screen covers the game
+> and pauses a run (`components/RotatePrompt.vue`, `app.vue`); held sideways the game fills the
+> whole screen (no 16:9 box), with the HUD clear of the notch (`viewport-fit=cover`). On Android,
+> tapping Swim! also goes fullscreen and locks landscape (`utils/landscape.ts`); iOS can't.
 > Sections 2, 3, 8 and 9 below still describe the pre-refactor game. That version is saved as
 > branch `_version/alpha` and tag `alpha`.
 

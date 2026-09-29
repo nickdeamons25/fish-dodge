@@ -1,14 +1,22 @@
 /**
  * Phone tilt tuning, in degrees. Turn: tip the phone left or right (like a
  * steering wheel, or tipping it sideways when it's held flatter). Climb: tilt
- * the top edge toward you to rise, away to dive, measured from how the phone
- * was held when the run started.
+ * the top edge away from you to rise and toward you to dive, like pushing a
+ * joystick, measured from how the phone was held when the run started.
  */
 const TILT = {
   turnDead: 3,
   turnFull: 25,
-  climbDead: 4,
-  climbFull: 18,
+  /** Up/down is gentler: a wide dead zone, and a curve so small tilts do little. */
+  climbDead: 8,
+  climbFull: 30,
+  climbCurve: 1.7,
+  /**
+   * Seconds for "level" to drift to however the phone is held now, so a hand
+   * that slowly sags doesn't leave the fish diving. Slow enough that a
+   * deliberate tilt still holds for as long as it takes to cross the tank.
+   */
+  relevelSeconds: 6,
   /** Smoothing per reading (0..1): higher follows the hand faster, lower hides sensor jitter. */
   follow: 0.35,
   /** Readings older than this mean tilt has stopped (sensor off, tab hidden). */
@@ -98,7 +106,9 @@ export class Input {
     this.gravity = g
       ? { x: g.x + (raw.x - g.x) * TILT.follow, y: g.y + (raw.y - g.y) * TILT.follow, z: g.z + (raw.z - g.z) * TILT.follow }
       : raw
-    this.lastTilt = performance.now()
+    const now = performance.now()
+    const dt = Math.min(0.1, (now - this.lastTilt) / 1000)
+    this.lastTilt = now
 
     const grav = this.gravity
     // Sideways: how far gravity leans toward the screen's left or right edge.
@@ -106,10 +116,11 @@ export class Input {
     // Forward/back: the angle of gravity between "down the screen" and "into it".
     const pitch = Math.atan2(grav.z, -grav.y) / DEG
     this.neutralPitch ??= pitch
+    this.neutralPitch += (pitch - this.neutralPitch) * Math.min(1, dt / TILT.relevelSeconds)
     // Left edge down leans gravity toward -x: turn left.
     this.tilt.turn = shape(-side, TILT.turnDead, TILT.turnFull)
-    // Top edge toward you raises the pitch: swim up.
-    this.tilt.climb = shape(pitch - this.neutralPitch, TILT.climbDead, TILT.climbFull)
+    // Top edge away from you lowers the pitch: swim up.
+    this.tilt.climb = shape(this.neutralPitch - pitch, TILT.climbDead, TILT.climbFull, TILT.climbCurve)
   }
 
   private on(target: EventTarget, type: string, fn: EventListener) {
@@ -118,10 +129,10 @@ export class Input {
   }
 }
 
-/** Degrees → -1..1, with a dead zone round zero and full strength past `full`. */
-function shape(deg: number, dead: number, full: number) {
+/** Degrees → -1..1, with a dead zone round zero, full strength past `full`, and an optional ease-in curve. */
+function shape(deg: number, dead: number, full: number, curve = 1) {
   const k = Math.max(0, Math.min(1, (Math.abs(deg) - dead) / (full - dead)))
-  return Math.sign(deg) * k
+  return Math.sign(deg) * k ** curve
 }
 
 /** How far the screen is turned from the device's natural (portrait) orientation, degrees. */

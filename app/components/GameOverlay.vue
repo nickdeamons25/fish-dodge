@@ -29,7 +29,7 @@ function play() {
           Best: <strong>{{ store.profile.highScore }}</strong> · Runs: {{ store.profile.totalRuns }}
         </p>
         <p v-if="canTilt" class="controls">
-          {{ store.tiltOn ? 'Tip the phone to turn · tilt it toward you to rise · or hold a finger where you want to go' : 'Hold a finger where you want to go' }}
+          {{ store.tiltOn ? 'Tip the phone to turn · tilt the top away to rise, toward you to dive · or hold a finger where you want to go' : 'Hold a finger where you want to go' }}
         </p>
         <p v-else class="controls">← → turn · ↑ ↓ up and down · hold mouse or touch to steer · P to pause</p>
       </div>

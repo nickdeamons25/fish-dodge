@@ -14,7 +14,8 @@ export default defineNuxtConfig({
   app: {
     head: {
       title: 'Fish Dodge',
-      meta: [{ name: 'viewport', content: 'width=device-width, initial-scale=1' }],
+      // viewport-fit=cover lets the game run under a phone's notch in landscape; the HUD keeps clear of it.
+      meta: [{ name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' }],
       link: [
         { rel: 'icon', href: 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐠</text></svg>' },
         { rel: 'preconnect', href: 'https://fonts.googleapis.com' },

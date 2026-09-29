@@ -44,6 +44,9 @@ const warning = computed(() =>
   align-items: center;
   gap: 12px;
   padding: 10px 14px;
+  /* Clear of a phone's notch and rounded corners in landscape. */
+  padding-left: max(14px, env(safe-area-inset-left));
+  padding-right: max(14px, env(safe-area-inset-right));
   pointer-events: none;
 }
 .stat {

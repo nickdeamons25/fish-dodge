@@ -19,6 +19,14 @@ function onVisibility() {
   if (document.hidden && store.status === 'playing') store.togglePause()
 }
 
+// Phones play sideways: in portrait, cover the game with a prompt and pause.
+const portraitQuery = import.meta.client ? window.matchMedia('(orientation: portrait) and (pointer: coarse)') : undefined
+const mustRotate = ref(portraitQuery?.matches ?? false)
+function onOrientation() {
+  mustRotate.value = portraitQuery?.matches ?? false
+  if (mustRotate.value && store.status === 'playing') store.togglePause()
+}
+
 // Long-presses and pinches on a phone would otherwise open the context menu
 // or zoom the page mid-run. Text fields keep their native behavior.
 function onContextMenu(e: Event) {
@@ -33,12 +41,14 @@ onMounted(() => {
   document.addEventListener('visibilitychange', onVisibility)
   document.addEventListener('contextmenu', onContextMenu)
   document.addEventListener('gesturestart', onGesture)
+  portraitQuery?.addEventListener('change', onOrientation)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   document.removeEventListener('visibilitychange', onVisibility)
   document.removeEventListener('contextmenu', onContextMenu)
   document.removeEventListener('gesturestart', onGesture)
+  portraitQuery?.removeEventListener('change', onOrientation)
 })
 </script>
 
@@ -49,6 +59,7 @@ onBeforeUnmount(() => {
       <GameHud v-if="store.status === 'playing' || store.status === 'paused'" />
       <GameOverlay />
     </div>
+    <RotatePrompt v-if="mustRotate" />
   </main>
 </template>
 
@@ -67,5 +78,16 @@ onBeforeUnmount(() => {
   overflow: hidden;
   container-type: size;
   box-shadow: 0 30px 80px rgb(0 0 0 / 0.45);
+}
+/* A phone held sideways: the game fills the whole screen, edge to edge. */
+@media (pointer: coarse) and (orientation: landscape) {
+  .stage { padding: 0; }
+  .frame {
+    width: 100vw;
+    height: 100dvh;
+    aspect-ratio: auto;
+    border-radius: 0;
+    box-shadow: none;
+  }
 }
 </style>

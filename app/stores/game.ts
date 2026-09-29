@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { enterLandscape } from '~/utils/landscape'
 import { requestTiltPermission, tiltSupported, type TiltPermission } from '~/utils/tilt'
 
 export type GameStatus = 'menu' | 'playing' | 'paused' | 'gameover'
@@ -72,8 +73,12 @@ export const useGameStore = defineStore('game', {
       if (on && this.tiltPermission === 'denied') this.tiltPermission = 'unknown' // let them try again
     },
 
-    /** Call straight from a tap or click: on iOS, that's the only time the motion prompt may show. */
+    /**
+     * Call straight from a tap or click: that's the only time the browser lets
+     * us ask for motion access (iOS) or go fullscreen in landscape (Android).
+     */
     startRun() {
+      enterLandscape()
       if (this.profile.tilt && tiltSupported() && this.tiltPermission !== 'granted') {
         requestTiltPermission().then(p => (this.tiltPermission = p))
       }
