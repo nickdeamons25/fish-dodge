@@ -201,7 +201,15 @@ export class FishGame {
   }
 
   private hazardContext() {
-    return { speed: this.speed, level: this.level, rand: Math.random, fish: this.fish.pos, heading: this.fish.heading }
+    return {
+      speed: this.speed,
+      level: this.level,
+      rand: Math.random,
+      fish: this.fish.pos,
+      heading: this.fish.heading,
+      turnRate: this.fish.turnRate,
+      viewYaw: this.d.rig.yaw,
+    }
   }
 
   /** Depth-of-field target: focus on the fish. */

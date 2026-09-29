@@ -37,13 +37,29 @@ export const SPAWN = {
   startInterval: 1.5,
   minInterval: 0.45,
   shrinkPerLevel: 0.12,
-  /** Hazards appear this far ahead of the fish, up to `lateral` either side of its path. */
-  ahead: 1500,
+  /**
+   * Hazards appear this far ahead of the fish (out in the fog, so they fade
+   * in), up to `lateral` either side of where it's heading.
+   */
+  aheadMin: 1350,
+  aheadMax: 1600,
   lateral: 260,
+  /**
+   * Spawns are aimed along the camera's view (what the player can see), led
+   * into a turn by where the view will be this many seconds later, but never
+   * more than `maxLead` radians — so with the spread they stay on screen.
+   */
+  leadSeconds: 0.5,
+  maxLead: 0.6,
+  /** Keep this much clear water between a new hazard and every other one. */
+  separation: 60,
+  /** Tries at finding a spot before skipping a spawn, and seconds until the next go after skipping. */
+  tries: 4,
+  retry: 0.2,
   /** Never spawn a hazard closer than this to the glass. */
   glassClearance: 120,
-  /** Gone once this far behind the fish, or this far away in any direction. */
-  despawnBehind: 300,
+  /** Gone once this far behind the camera, or this far from the fish in any direction. */
+  despawnBehind: 80,
   despawnFar: 2400,
 }
 

@@ -11,15 +11,19 @@ export interface HazardContext {
   speed: number
   level: number
   rand: () => number
-  /** Where the player is and which way it's heading, for hazards that react to them. */
+  /** Where the player is, which way it's heading and how fast it's turning, for hazards that react to them. */
   fish: TankPoint
   heading: number
+  turnRate: number
+  /** The camera's heading, which may lag the fish's mid-turn. */
+  viewYaw: number
 }
 
 /**
  * A live hazard. Position is in tank space. Each hazard has its own frame,
- * turned to `heading` (the way the fish was swimming when it spawned): local +X
- * runs away from the fish, local -X back toward it, +Z to the fish's right.
+ * turned to `heading`: at spawn that's the bearing from the fish to the
+ * hazard, so local +X runs away from the fish, local -X back toward it, and
+ * +Z is to the fish's right. Homing swimmers keep turning it (see `homing`).
  */
 export interface Hazard {
   def: HazardDef
@@ -51,6 +55,12 @@ export interface HazardDef {
   speedFactor: number
   /** Minimum seconds between two spawns of this hazard, for rare ones. */
   cooldown?: number
+  /**
+   * Swimmers that come at you turn toward the fish at up to this rate
+   * (radians/s) while it's still well ahead of them, so turning away doesn't
+   * lose them; close up they commit to a line, so they can still be dodged.
+   */
+  homing?: number
   /** Size the hitbox and set height and behaviour. `pos.x`/`pos.z` and `heading` are already set. */
   setup: (h: Hazard, ctx: HazardContext) => void
   /** Build the 3D object once `setup` has sized the hitbox. */
@@ -145,6 +155,7 @@ const blueFish: HazardDef = {
   minLevel: 1,
   weight: 2,
   speedFactor: 1.5, // swims at you, faster than the current
+  homing: 0.9,
   setup(h, { rand }) {
     h.data.size = range(rand, 0.9, 1.25)
     const s = h.data.size
@@ -195,6 +206,7 @@ const puffer: HazardDef = {
   minLevel: 1,
   weight: 1.5,
   speedFactor: 1.2, // a slow swim toward you: face first, and it lingers in your way
+  homing: 0.6,
   setup(h, { rand }) {
     h.data.size = range(rand, 0.9, 1.2)
     const s = h.data.size

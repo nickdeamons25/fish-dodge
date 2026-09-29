@@ -1,11 +1,15 @@
 import * as THREE from 'three'
 import { SPAWN, TANK } from '../constants'
 import { createShadow, placeShadow } from '../tank/shadow'
-import { forward, fromCentre, right, toWorld, type TankPoint } from '../tank/space'
+import { forward, headingOf, right, toWorld, wrapAngle, type TankPoint } from '../tank/space'
 import { HAZARDS, type Hazard, type HazardContext, type HazardDef } from './registry'
 
 /** Seconds for a cleared hazard to shrink away. */
 const VANISH = 0.3
+/** How far behind the fish the chase camera sits (engine/CameraRig.ts). */
+const CAMERA_BACK = 330
+/** Homing swimmers stop turning once the fish is this close ahead, and commit to their line. */
+const HOMING_COMMIT = 300
 
 interface Live extends Hazard {
   /** Turned to the hazard's heading and placed in the tank; holds the def's mesh. */
@@ -48,13 +52,17 @@ export class HazardField {
     if (spawning) {
       this.untilNext -= dt
       if (this.untilNext <= 0) {
-        this.spawn(ctx)
         const interval = Math.max(SPAWN.minInterval, SPAWN.startInterval - (ctx.level - 1) * SPAWN.shrinkPerLevel)
-        this.untilNext = interval * (0.75 + ctx.rand() * 0.5)
+        // No room (say, heading for the glass): try again shortly rather than
+        // leave a gap once the fish turns back into open water.
+        this.untilNext = this.spawn(ctx) ? interval * (0.75 + ctx.rand() * 0.5) : SPAWN.retry
       }
     }
 
+    forward(ctx.heading, fwd)
+    const fishFwd = { x: fwd.x, z: fwd.z }
     for (const h of this.live) {
+      if (h.def.homing && h.vanishing === undefined) this.home(h, ctx, fishFwd, dt)
       // The tank stands still and the fish swims; a hazard's own motion is
       // whatever its speedFactor adds on top (see HazardDef).
       const v = (1 - h.def.speedFactor) * ctx.speed
@@ -65,11 +73,13 @@ export class HazardField {
       if (h.vanishing !== undefined) h.vanishing -= dt
     }
 
-    forward(ctx.heading, fwd)
+    // Behind the camera means out of sight. Measured along the camera's own
+    // heading, which lags the fish's mid-turn, so nothing vanishes in view.
+    forward(ctx.viewYaw, fwd)
     this.live = this.live.filter((h) => {
       const dx = h.pos.x - ctx.fish.x
       const dz = h.pos.z - ctx.fish.z
-      const behind = dx * fwd.x + dz * fwd.z < -(SPAWN.despawnBehind + h.half.a)
+      const behind = dx * fwd.x + dz * fwd.z < -(CAMERA_BACK + SPAWN.despawnBehind + Math.max(h.half.a, h.half.z))
       const gone = behind || Math.hypot(dx, dz) > SPAWN.despawnFar || (h.vanishing !== undefined && h.vanishing <= 0)
       if (gone) this.remove(h)
       return !gone
@@ -109,6 +119,20 @@ export class HazardField {
     })
   }
 
+  /**
+   * Turn a swimmer toward the fish, a little at a time. Only while the fish is
+   * still well ahead of it; close up it holds its line, so a late dodge works.
+   */
+  private home(h: Live, ctx: HazardContext, fishFwd: { x: number, z: number }, dt: number) {
+    const dx = h.pos.x - ctx.fish.x
+    const dz = h.pos.z - ctx.fish.z
+    if (dx * fishFwd.x + dz * fishFwd.z < HOMING_COMMIT || Math.hypot(dx, dz) < HOMING_COMMIT) return
+    // Its heading points from the fish to it; it swims back along that line.
+    const want = headingOf(dx, dz)
+    const step = h.def.homing! * dt
+    h.heading = wrapAngle(h.heading + THREE.MathUtils.clamp(wrapAngle(want - h.heading), -step, step))
+  }
+
   private remove(h: Live) {
     this.group.remove(h.frame, h.shadow)
     ;(h.shadow.material as THREE.Material).dispose() // each shadow owns its material for per-hazard opacity
@@ -129,7 +153,11 @@ export class HazardField {
     })
   }
 
-  /** Spawn ahead of the fish, off to one side of its path; false if there's no room there. */
+  /**
+   * Spawn out ahead, in view: along the camera's heading, led a little into
+   * any turn, somewhere within `SPAWN.lateral` of that line, clear of the
+   * glass, the mound and other hazards. A few tries; false if there's no room.
+   */
   private spawn(ctx: HazardContext, forced?: HazardDef) {
     const def = forced ?? weightedPick(this.eligible(ctx), ctx.rand)
     if (!def) return false
@@ -145,17 +173,8 @@ export class HazardField {
       shadow: createShadow(1),
     }
     def.setup(h, ctx)
-    // Past the spawn line by the hazard's own half-length so it never pops in on screen.
-    const ahead = SPAWN.ahead + h.half.a
-    const lateral = (ctx.rand() * 2 - 1) * SPAWN.lateral
-    forward(ctx.heading, fwd)
-    right(ctx.heading, side)
-    h.pos.x = ctx.fish.x + fwd.x * ahead + side.x * lateral
-    h.pos.z = ctx.fish.z + fwd.z * ahead + side.z * lateral
-    // Only inside the glass, and clear of the mound in the middle.
-    const r = fromCentre(h.pos)
     const reach = Math.max(h.half.a, h.half.z)
-    if (r > TANK.radius - SPAWN.glassClearance - reach || r < TANK.mound.radius + reach + 40) return false
+    if (!this.findSpot(h, reach, ctx)) return false
 
     this.lastSpawn.set(def.id, this.clock)
     h.mesh = def.build(h)
@@ -166,6 +185,35 @@ export class HazardField {
     this.group.add(h.frame, h.shadow)
     this.live.push(h)
     return true
+  }
+
+  /** Place `h` somewhere valid ahead and face it along the line from the fish; false if nowhere fits. */
+  private findSpot(h: Live, reach: number, ctx: HazardContext) {
+    for (let i = 0; i < SPAWN.tries; i++) {
+      // Past the spawn line by the hazard's own size so it never pops in on screen.
+      const dist = SPAWN.aheadMin + ctx.rand() * (SPAWN.aheadMax - SPAWN.aheadMin) + reach
+      // Aim where the player will be looking: the camera's heading (it lags the
+      // fish's), plus where a turn is taking it. At full lock the fish circles
+      // tightly and never gets far, so what counts is what comes into view.
+      const lead = THREE.MathUtils.clamp(ctx.turnRate * SPAWN.leadSeconds, -SPAWN.maxLead, SPAWN.maxLead)
+      const spread = (ctx.rand() * 2 - 1) * (SPAWN.lateral / dist)
+      const bearing = ctx.viewYaw + lead + spread
+      forward(bearing, fwd)
+      const x = ctx.fish.x + fwd.x * dist
+      const z = ctx.fish.z + fwd.z * dist
+
+      const r = Math.hypot(x, z)
+      if (r > TANK.radius - SPAWN.glassClearance - reach || r < TANK.mound.radius + reach + 40) continue
+      const crowded = this.live.some(o =>
+        Math.hypot(o.pos.x - x, o.pos.z - z) < reach + Math.max(o.half.a, o.half.z) + SPAWN.separation)
+      if (crowded) continue
+
+      h.pos.x = x
+      h.pos.z = z
+      h.heading = wrapAngle(bearing)
+      return true
+    }
+    return false
   }
 }
 

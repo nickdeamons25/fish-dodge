@@ -22,7 +22,14 @@ _Last updated: 2026-09-25_
 > instances in 9 instanced draws, all purely decorative and under ~110 units tall).
 > `tank/Water.ts` keeps sun shafts (additive, hand-faded by distance) and drifting specks
 > around the fish. Fog is thicker (250–1800). No measurable GPU cost (~10–11 ms here).
-> Next: proper spawning (step 2), walls/big rocks that force turns (step 3), phone tilt (step 4).
+> **Step 2 (spawning) done** (`hazards/HazardField.ts`): hazards spawn 1350–1600 ahead along the
+> *camera's* heading (what's on screen), led into a turn by up to 0.6 rad, ±260 either side,
+> clear of the glass, the mound and each other (4 tries; after a miss it retries in 0.2 s, so
+> hazards resume as soon as you turn away from the glass). Each faces along the line from the
+> fish. Swimmers home in (`HazardDef.homing`: blue fish 0.9 rad/s, puffer 0.6) until the fish is
+> within 300 or off to the side, then hold their line so you can still dodge. Hazards despawn
+> once behind the camera, so nothing vanishes in view mid-turn.
+> Next: walls/big rocks that force turns (step 3), phone tilt (step 4).
 > Sections 2, 3, 8 and 9 below still describe the pre-refactor game. That version is saved as
 > branch `_version/alpha` and tag `alpha`.
 
