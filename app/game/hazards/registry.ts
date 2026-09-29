@@ -4,6 +4,7 @@ import { forward, right, type TankPoint } from '../tank/space'
 import { faceTravel } from './critters'
 import { buildEel, poseEel } from './eel'
 import { animateJelly, buildJelly } from './jellyfish'
+import { buildObstacle, type SolidPart } from './obstacles'
 import { PUFFER_GROWTH, animateBlueFish, buildBlueFish, buildPuffer, posePuffer } from './swimmers'
 
 export interface HazardContext {
@@ -34,7 +35,22 @@ export interface Hazard {
   /** Free-form per-instance state for behaviours. */
   data: Record<string, number>
   mesh: THREE.Object3D
+  /**
+   * Solid obstacles (big rocks, reef walls) have a shape instead of just a
+   * hitbox: they push the fish out rather than letting it through (see
+   * obstacles.ts). `half` still bounds them, for spacing and despawning.
+   */
+  solid?: SolidPart[]
+  /**
+   * Obstacles rise out of the sand when they appear, and temporary ones sink
+   * back after `lifetime` seconds. 0..1; only solid above RISE_SOLID.
+   */
+  rise?: number
+  lifetime?: number
 }
+
+/** A rising or sinking obstacle only blocks once it's at least this far up. */
+export const RISE_SOLID = 0.5
 
 /**
  * One kind of hazard. To add a new one, write a definition and push it onto
@@ -291,4 +307,40 @@ const eel: HazardDef = {
   },
 }
 
-export const HAZARDS: HazardDef[] = [rock, jellyfish, blueFish, puffer, eel]
+// ---- Solid obstacles: steer round them ---------------------------------------
+
+/** A sea stack: a pile of boulders from the sand to the surface, too tall to swim over. */
+const bigRock: HazardDef = {
+  id: 'big-rock',
+  minLevel: 1,
+  weight: 0.7,
+  speedFactor: 1,
+  cooldown: 6,
+  setup(h, { rand }) {
+    const r = range(rand, 130, 210)
+    h.half = { a: r, y: H / 2, z: r }
+    h.solid = [{ kind: 'circle', a: 0, z: 0, r }]
+    h.data.seed = Math.floor(rand() * 1e6)
+    h.rise = 1
+  },
+  build: h => buildObstacle(h.solid!, rockGeos, h.data.seed!),
+}
+
+/** A stretch of reef wall across your path that rises from the sand as you approach; go round an end. */
+const reefWall: HazardDef = {
+  id: 'reef-wall',
+  minLevel: 2,
+  weight: 0.6,
+  speedFactor: 1,
+  cooldown: 10,
+  setup(h, { rand }) {
+    const half = range(rand, 300, 500)
+    h.half = { a: 40, y: H / 2, z: half }
+    h.solid = [{ kind: 'box', a: 0, z: 0, ha: 40, hz: half }]
+    h.data.seed = Math.floor(rand() * 1e6)
+    h.rise = 0
+  },
+  build: h => buildObstacle(h.solid!, rockGeos, h.data.seed!),
+}
+
+export const HAZARDS: HazardDef[] = [rock, jellyfish, blueFish, puffer, eel, bigRock, reefWall]

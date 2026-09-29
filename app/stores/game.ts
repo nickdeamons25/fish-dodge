@@ -19,13 +19,20 @@ export interface RunState {
   speed: number
   /** The fish will reach the glass soon on its current heading. */
   glassAhead: boolean
+  /** A warning to show for a moment, such as the level-up wall going up. */
+  alert: RunAlert | null
+}
+
+export interface RunAlert {
+  title: string
+  hint: string
 }
 
 const PROFILE_KEY = 'fish-dodge:profile'
 const MAX_LIVES = 3
 
 function freshRun(): RunState {
-  return { score: 0, distance: 0, level: 1, lives: MAX_LIVES, speed: 0, glassAhead: false }
+  return { score: 0, distance: 0, level: 1, lives: MAX_LIVES, speed: 0, glassAhead: false, alert: null }
 }
 
 function loadProfile(): PlayerProfile {

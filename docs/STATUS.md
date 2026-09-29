@@ -29,7 +29,18 @@ _Last updated: 2026-09-25_
 > fish. Swimmers home in (`HazardDef.homing`: blue fish 0.9 rad/s, puffer 0.6) until the fish is
 > within 300 or off to the side, then hold their line so you can still dodge. Hazards despawn
 > once behind the camera, so nothing vanishes in view mid-turn.
-> Next: walls/big rocks that force turns (step 3), phone tilt (step 4).
+> **Step 3 (forced turns) done.** Solid obstacles (`hazards/obstacles.ts`) have a shape of
+> full-height boxes and circles in their hazard frame; they always push the fish back out
+> (even while it's blinking), mirror its heading and cost a life (`HazardField.solidContact`,
+> `FishGame.bumpSolids`). **Big rocks** (sea stacks, r 130–210, from level 1) and **reef walls**
+> (600–1000 long, from level 2, rise from the sand) join the random pool. **At each level-up** a
+> wall goes up across the whole tank, glass to glass, as far ahead in view as fits: half the time
+> with a 380-wide gap 650–1050 off to one side, otherwise a dead end you must turn round from.
+> It stands 14 s, then sinks; at most one every 16 s. A banner says which ("Reef wall ahead! Gap
+> on the left ←" / "Dead end ahead! Turn right round ↺"), random spawns pause 3.5 s, hazards in
+> its way shrink away, and nothing spawns behind an obstacle. Obstacle meshes are stacked rock,
+> merged into one draw each.
+> Next: phone tilt (step 4).
 > Sections 2, 3, 8 and 9 below still describe the pre-refactor game. That version is saved as
 > branch `_version/alpha` and tag `alpha`.
 

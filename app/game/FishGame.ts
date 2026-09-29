@@ -1,16 +1,29 @@
 import * as THREE from 'three'
-import type { GameStatus, GameStore } from '~/stores/game'
+import type { GameStatus, GameStore, RunAlert } from '~/stores/game'
 import { FISH, METRES_PER_LEVEL, PX_PER_METRE, SPEED, STORE_SYNC_MS, TANK } from './constants'
 import type { CameraRig } from './engine/CameraRig'
 import type { Input } from './engine/Input'
 import { Fish } from './entities/Fish'
-import { HazardField } from './hazards/HazardField'
+import { HazardField, type GateKind } from './hazards/HazardField'
 import type { Hazard } from './hazards/registry'
 import type { Tank } from './tank/Tank'
 import { forward, fromCentre, headingOf, toWorld } from './tank/space'
 
 /** Depth-of-field strength: light, so hazards at other depths stay readable. */
 const DOF_STRENGTH = 0.2
+
+/** The level-up wall: which kinds it can be (half the time a dead end), and what the banner says for each. */
+const GATE_KINDS: GateKind[] = ['gap-left', 'gap-right', 'closed', 'closed']
+const GATE_ALERTS: Record<GateKind, RunAlert> = {
+  'gap-left': { title: 'Reef wall ahead!', hint: 'Gap on the left ←' },
+  'gap-right': { title: 'Reef wall ahead!', hint: 'Gap on the right →' },
+  'closed': { title: 'Dead end ahead!', hint: 'Turn right round ↺' },
+}
+/** How long the banner shows, and how long other hazards hold off, after a wall goes up. */
+const ALERT_SECONDS = 3
+const GATE_CALM = 3.5
+/** Seconds after one level-up wall goes up before another can (it stands for 14 s; see HazardField GATE). */
+const GATE_MIN_GAP = 16
 
 export interface GameDeps {
   scene: THREE.Scene
@@ -41,6 +54,12 @@ export class FishGame {
   private sinceSync = 0
   private time = 0
   private glassAhead = false
+  /** A level-up wall waiting for room to go up (see HazardField.spawnGate). */
+  private gatePending: GateKind | null = null
+  private lastGate = -Infinity
+  /** The banner being shown, and for how much longer. */
+  private alert: RunAlert | null = null
+  private alertLeft = 0
   private readonly fwd = new THREE.Vector3()
 
   constructor(private d: GameDeps) {
@@ -79,6 +98,10 @@ export class FishGame {
   }
 
   private resetWorld() {
+    this.gatePending = null
+    this.lastGate = -Infinity
+    this.alert = null
+    this.alertLeft = 0
     this.field.clear()
     this.fish.respawn()
     this.d.rig.snap(this.fish.pos, this.fish.heading)
@@ -102,13 +125,26 @@ export class FishGame {
     if (this.running) {
       this.distancePx += this.speed * dt
       const metres = this.distancePx / PX_PER_METRE
-      this.level = 1 + Math.floor(metres / METRES_PER_LEVEL)
+      const level = 1 + Math.floor(metres / METRES_PER_LEVEL)
+      // A wall at each level-up — unless one went up only a moment ago. At top
+      // speed levels come every few seconds, and walls would pile up.
+      if (level > this.level && this.time - this.lastGate > GATE_MIN_GAP) {
+        this.gatePending = GATE_KINDS[Math.floor(Math.random() * GATE_KINDS.length)]!
+      }
+      this.level = level
       this.speed = Math.min(SPEED.max, SPEED.start + metres * SPEED.rampPerMetre)
 
       this.sinceSync += dt * 1000
       if (this.sinceSync >= STORE_SYNC_MS) {
         this.sinceSync = 0
-        store.syncRun({ distance: metres, score: Math.floor(metres), level: this.level, speed: Math.round(this.speed), glassAhead: this.glassAhead })
+        store.syncRun({
+          distance: metres,
+          score: Math.floor(metres),
+          level: this.level,
+          speed: Math.round(this.speed),
+          glassAhead: this.glassAhead,
+          alert: this.alert,
+        })
       }
     }
     else if (store.status === 'gameover') {
@@ -122,7 +158,11 @@ export class FishGame {
     this.d.tank.update(dt, this.fish.pos, this.d.rig.yaw)
     this.bumpGlass()
     this.bumpMound()
+    this.bumpSolids()
     this.glassAhead = this.running && this.secondsToGlass() < FISH.glassWarnSeconds
+    if (this.running && this.gatePending) this.raiseGate(this.gatePending)
+    this.alertLeft -= dt
+    if (this.alertLeft <= 0) this.alert = null
     this.field.update(dt, this.time, this.hazardContext(), this.running)
 
     if (this.running && !this.fish.isInvulnerable) {
@@ -142,6 +182,16 @@ export class FishGame {
     return t / Math.max(1, this.speed)
   }
 
+  /** Put up the level-up wall once there's room ahead, and say what kind it is. */
+  private raiseGate(kind: GateKind) {
+    if (!this.field.spawnGate(this.hazardContext(), kind)) return // try again next frame
+    this.gatePending = null
+    this.lastGate = this.time
+    this.field.pause(GATE_CALM)
+    this.alert = GATE_ALERTS[kind]
+    this.alertLeft = ALERT_SECONDS
+  }
+
   /**
    * Keep the fish inside a circle of `limit` round the centre (or outside it,
    * for the mound): if it's crossed, put it back on the line and turn its
@@ -157,14 +207,29 @@ export class FishGame {
     p.x = nx * limit
     p.z = nz * limit
     const back = inside ? { x: -nx, z: -nz } : { x: nx, z: nz }
+    this.glance(back)
+    return back
+  }
+
+  /** Mirror the heading off a surface facing `back`, like a ball off a cushion, if the fish is swimming into it. */
+  private glance(back: { x: number, z: number }) {
     const f = forward(this.fish.heading, this.fwd)
     const into = -(f.x * back.x + f.z * back.z)
     if (into > 0) {
-      // Mirror the heading off the surface, like a ball off a cushion.
       this.fish.heading = headingOf(f.x + 2 * into * back.x, f.z + 2 * into * back.z)
       this.fish.turnRate = 0
     }
-    return back
+  }
+
+  /** Big rocks and reef walls: never swum through, even while blinking. Out the way it came, and it hurts. */
+  private bumpSolids() {
+    const hit = this.field.solidContact(this.fish.pos, this.fish.half, this.fish.heading)
+    if (!hit) return
+    this.fish.pos.x += hit.nx * hit.depth
+    this.fish.pos.z += hit.nz * hit.depth
+    const back = { x: hit.nx, z: hit.nz }
+    this.glance(back)
+    this.onBump(back)
   }
 
   private bumpGlass() {
@@ -178,7 +243,7 @@ export class FishGame {
     if (back) this.onBump(back)
   }
 
-  /** Swam into the glass or the mound: it hurts like a hazard, unless still blinking from the last hit. */
+  /** Swam into the glass, the mound or an obstacle: it hurts like a hazard, unless still blinking from the last hit. */
   private onBump(back: { x: number, z: number }) {
     if (this.running && !this.fish.isInvulnerable) this.onHit(undefined, back)
     else this.d.rig.shake(0.15, 4)
