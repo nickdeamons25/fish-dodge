@@ -1,7 +1,6 @@
 import * as THREE from 'three'
 import { TANK } from '../constants'
 import type { TankPoint } from '../tank/space'
-import { VIEWS, type ViewId } from '../tank/views'
 import { faceTravel } from './critters'
 import { buildEel, poseEel } from './eel'
 import { animateJelly, buildJelly } from './jellyfish'
@@ -14,7 +13,6 @@ export interface HazardContext {
   rand: () => number
   /** Where the player is, for hazards that react to them. */
   fish: TankPoint
-  view: ViewId
 }
 
 /** A live hazard. Position and hitbox are in tank space. */
@@ -40,12 +38,6 @@ export interface HazardDef {
   weight: number
   /** Multiplier on world scroll speed (1 = drifts with the current, >1 swims at you). */
   speedFactor: number
-  /**
-   * Views this hazard spawns in (default: all). A hazard anchored to a height
-   * the player can't control in a view — like a hook dropping from the surface
-   * seen top-down — doesn't belong there.
-   */
-  views?: ViewId[]
   /** Minimum seconds between two spawns of this hazard, for rare ones. */
   cooldown?: number
   /** Place the hazard across the tank and size its hitbox. `pos.a` is already set. */
@@ -83,8 +75,6 @@ const beadMat = new THREE.MeshStandardMaterial({ color: 0xff4d4d, roughness: 0.3
 const lineMat = new THREE.MeshBasicMaterial({ color: 0xe8eef5, transparent: true, opacity: 0.6 })
 const lineGeo = new THREE.CylinderGeometry(0.8, 0.8, 1, 4).translate(0, 0.5, 0)
 
-/** Views where you can steer up and down; anything anchored to the seabed or surface needs them. */
-const HEIGHT_VIEWS: ViewId[] = ['side-right', 'side-left', 'rear']
 const smooth = (x: number) => { const t = Math.min(1, Math.max(0, x)); return t * t * (3 - 2 * t) }
 
 // ---- Definitions ------------------------------------------------------------
@@ -93,7 +83,6 @@ const rock: HazardDef = {
   minLevel: 1,
   weight: 3,
   speedFactor: 1,
-  views: HEIGHT_VIEWS, // on the seabed; top-down can't swim over it
   setup(h, { rand }) {
     const s = range(rand, 0.8, 1.6)
     h.half = { a: 36 * s, y: 28 * s, z: 36 * s }
@@ -119,18 +108,12 @@ const jellyfish: HazardDef = {
   minLevel: 1,
   weight: 3,
   speedFactor: 0.8,
-  setup(h, { rand, view, fish }) {
+  setup(h, { rand }) {
     h.half = { a: 20, y: 22, z: 20 }
-    // Jellies stay near the focal plane in every view, so they're never lost deep
-    // in the blur: top-down, depth is height, so they hover near the fish's.
-    const topDown = view === 'top'
-    h.data.baseY = topDown
-      ? THREE.MathUtils.clamp(fish.y + range(rand, -60, 60), 60, TANK.height - 90)
-      : range(rand, 60, TANK.height - 90)
-    h.data.amp = topDown ? range(rand, 18, 32) : range(rand, 40, 90)
+    h.data.baseY = range(rand, 60, TANK.height - 90)
+    h.data.amp = range(rand, 40, 90)
     h.data.baseZ = randomZ(h, rand)
-    // Side views: depth is z (already on the fish's plane); keep the drift small.
-    h.data.zAmp = view === 'side-right' || view === 'side-left' ? 10 : 30
+    h.data.zAmp = 30
     h.data.phase = rand() * Math.PI * 2
     h.pos.y = h.data.baseY
     h.pos.z = h.data.baseZ
@@ -151,7 +134,6 @@ const hook: HazardDef = {
   minLevel: 2,
   weight: 2,
   speedFactor: 1,
-  views: HEIGHT_VIEWS, // drops from the surface; top-down can't swim under it
   setup(h, { rand }) {
     h.half = { a: 13, y: 18, z: 13 }
     h.pos.y = -40
@@ -170,7 +152,7 @@ const hook: HazardDef = {
     const bead = new THREE.Mesh(new THREE.SphereGeometry(5, 12, 10), beadMat)
     bead.position.y = 22
     hookGroup.add(shank, bend, bead)
-    // Angled so the bend reads from side, top and rear cameras alike.
+    // Angled so the bend reads from the chase camera.
     hookGroup.rotation.y = Math.PI / 4
     g.add(hookGroup)
 
@@ -216,13 +198,11 @@ const blueFish: HazardDef = {
 
 /** Pufferfish inflate tuning. */
 const PUFF = {
-  /** Views where it reacts to you. Top-down can't judge height, so it stays deflated there. */
-  views: ['side-right', 'side-left', 'rear'] as ViewId[],
   /** Minimum distance ahead of the player that sets it off. */
   triggerDist: 230,
   /** …or this many seconds of closing speed, whichever is further… */
   warnSeconds: 0.9,
-  /** …but never beyond the right edge of the side view, so you always see it puff. */
+  /** …but never so far ahead that it's lost in the fog. */
   maxTriggerDist: 520,
   /** Only when roughly level with the player. */
   triggerLevel: 140,
@@ -261,17 +241,14 @@ const puffer: HazardDef = {
   update(h, dt, time, ctx) {
     h.pos.y = h.data.baseY! + Math.sin(time * 1.2 + h.data.phase!) * 25
 
-    // Side and rear views: puff up when the player swims close, deflate once they're past.
+    // Puff up when the player swims close, deflate once they're past.
     const ahead = h.pos.a - ctx.fish.a // > 0 while the fish is still approaching
-    // "Level with you" on the axes you can steer across: height in the side
-    // views, height and across-the-tank in the rear view.
-    const view = VIEWS[ctx.view]
-    const level = Math.hypot(h.pos.y - ctx.fish.y, view.collide.z ? h.pos.z - ctx.fish.z : 0)
+    // "Level with you" across both axes you steer: height and across the tank.
+    const level = Math.hypot(h.pos.y - ctx.fish.y, h.pos.z - ctx.fish.z)
     // React at a distance that gives the same warning time at any speed.
     const reach = Math.min(PUFF.maxTriggerDist, Math.max(PUFF.triggerDist, ctx.speed * puffer.speedFactor * PUFF.warnSeconds))
-    const puffs = PUFF.views.includes(ctx.view)
-    if (puffs && !h.data.puffed && ahead < reach && ahead > -30 && level < PUFF.triggerLevel) h.data.puffed = 1
-    if (h.data.puffed && (ahead < -60 || level > PUFF.releaseLevel || !puffs)) h.data.puffed = 0
+    if (!h.data.puffed && ahead < reach && ahead > -30 && level < PUFF.triggerLevel) h.data.puffed = 1
+    if (h.data.puffed && (ahead < -60 || level > PUFF.releaseLevel)) h.data.puffed = 0
 
     // Springy inflate (fast, overshoots), slow deflate.
     const target = h.data.puffed ? 1 : 0
@@ -298,7 +275,6 @@ const eel: HazardDef = {
   minLevel: 1,
   weight: 0.6,
   speedFactor: 1,
-  views: HEIGHT_VIEWS,
   cooldown: 25, // rare: never two within 25 s
   setup(h, { rand }) {
     h.half = { a: 16, y: 14, z: 16 }

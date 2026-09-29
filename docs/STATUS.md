@@ -2,6 +2,13 @@
 
 _Last updated: 2026-09-25_
 
+> **Refactor in progress (branch `refactor/rear-tunnel`, 2026-09-29):** the game is
+> being rebuilt as rear view only, with roll-around-a-tunnel steering, phone tilt,
+> and open-ocean scenery. **Step 1 is done:** the four views, tank turns, `flow`, the
+> turn warning (`TurnWarning.vue`, `FishArrow.vue`) and the T/1–4 dev keys are gone,
+> and the game runs in the old rear view. Sections 2, 3 and 9 below still describe
+> the pre-refactor game. That version is saved as branch `_version/alpha` and tag `alpha`.
+
 A 3D side-scrolling dodge game: you steer a clownfish through a moving aquarium
 while hazards swim, drift and drop at you. At each new level the tank "turns" to
 a different view (side, current reversed, top-down, rear), which changes how you

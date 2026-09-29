@@ -1,5 +1,4 @@
 import { defineStore } from 'pinia'
-import type { ViewId } from '~/game/tank/views'
 
 export type GameStatus = 'menu' | 'playing' | 'paused' | 'gameover'
 
@@ -18,17 +17,13 @@ export interface RunState {
   level: number
   lives: number
   speed: number
-  /** Which way the tank is currently turned. */
-  view: ViewId
-  /** Set while the turn warning is showing; cleared once the tank has turned. */
-  incomingView: ViewId | null
 }
 
 const PROFILE_KEY = 'fish-dodge:profile'
 const MAX_LIVES = 3
 
 function freshRun(): RunState {
-  return { score: 0, distance: 0, level: 1, lives: MAX_LIVES, speed: 0, view: 'side-right', incomingView: null }
+  return { score: 0, distance: 0, level: 1, lives: MAX_LIVES, speed: 0 }
 }
 
 function loadProfile(): PlayerProfile {
@@ -83,19 +78,6 @@ export const useGameStore = defineStore('game', {
       // Final numbers are locked in once the run ends.
       if (this.status !== 'playing') return
       Object.assign(this.run, patch)
-    },
-
-    announceTurn(next: ViewId) {
-      this.run.incomingView = next
-    },
-
-    completeTurn(view: ViewId) {
-      this.run.view = view
-      this.run.incomingView = null
-    },
-
-    cancelTurn() {
-      this.run.incomingView = null
     },
 
     /** Returns the lives remaining so the scene can react. */

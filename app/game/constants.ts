@@ -10,22 +10,13 @@
 export const TANK = {
   height: 456,
   depth: 456,
-  /**
-   * Length of the physical tank box; the world scrolls through it. Symmetric
-   * about FLOW_PIVOT so a reversed current has the same room on the other side.
-   */
+  /** Length of the physical tank box; the world scrolls through it. */
   minA: -1100,
   maxA: 1700,
   /** How far forward/back the fish may swim along the current. */
   fishAMin: -60,
   fishAMax: 420,
 }
-
-/**
- * World X the current mirrors around when it reverses — the centre of the side
- * cameras' view. Reversing maps a → 2·FLOW_PIVOT − a (see tank/space.ts).
- */
-export const FLOW_PIVOT = 300
 
 /** World pixels per displayed metre. */
 export const PX_PER_METRE = 12
@@ -39,7 +30,7 @@ export const SPEED = {
   rampPerMetre: 0.35,
 }
 
-/** Metres between difficulty levels. Every level-up turns the tank. */
+/** Metres between difficulty levels. */
 export const METRES_PER_LEVEL = 300
 
 export const SPAWN = {
@@ -47,15 +38,6 @@ export const SPAWN = {
   startInterval: 1.5,
   minInterval: 0.45,
   shrinkPerLevel: 0.12,
-}
-
-export const TURN = {
-  /** Warning shown (and spawning halted) before the tank turns, seconds. */
-  warn: 2.6,
-  /** Duration of the camera move, seconds. Slow on purpose: it's a big spatial shift. */
-  flip: 3.2,
-  /** Calm period after the move before hazards spawn again, seconds. */
-  settle: 0.8,
 }
 
 export const FISH = {

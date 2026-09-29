@@ -39,12 +39,12 @@ export class HazardField {
     this.untilNext = 0.6
   }
 
-  update(dt: number, time: number, ctx: HazardContext, view: View, spawning: boolean, fish: TankPoint) {
+  update(dt: number, time: number, ctx: HazardContext, view: View, spawning: boolean) {
     this.clock += dt
     if (spawning) {
       this.untilNext -= dt
       if (this.untilNext <= 0) {
-        this.spawn(ctx, view, fish)
+        this.spawn(ctx, view)
         const interval = Math.max(SPAWN.minInterval, SPAWN.startInterval - (ctx.level - 1) * SPAWN.shrinkPerLevel)
         this.untilNext = interval * (0.75 + ctx.rand() * 0.5)
       }
@@ -76,14 +76,13 @@ export class HazardField {
     }
   }
 
-  /** First hazard overlapping the given box on the view's collidable axes. */
-  hitTest(pos: TankPoint, half: TankPoint, view: View): Hazard | undefined {
-    const c = view.collide
+  /** First hazard overlapping the given box. */
+  hitTest(pos: TankPoint, half: TankPoint): Hazard | undefined {
     return this.live.find(h =>
       h.vanishing === undefined
-      && (!c.a || Math.abs(h.pos.a - pos.a) < h.half.a + half.a)
-      && (!c.y || Math.abs(h.pos.y - pos.y) < h.half.y + half.y)
-      && (!c.z || Math.abs(h.pos.z - pos.z) < h.half.z + half.z),
+      && Math.abs(h.pos.a - pos.a) < h.half.a + half.a
+      && Math.abs(h.pos.y - pos.y) < h.half.y + half.y
+      && Math.abs(h.pos.z - pos.z) < h.half.z + half.z,
     )
   }
 
@@ -92,25 +91,24 @@ export class HazardField {
     ;(h.shadow.material as THREE.Material).dispose() // each shadow owns its material for per-hazard opacity
   }
 
-  /** Spawn a specific hazard now, ignoring level, view and cooldown rules (dev/testing). */
-  spawnById(id: string, ctx: HazardContext, view: View, fish: TankPoint) {
+  /** Spawn a specific hazard now, ignoring level and cooldown rules (dev/testing). */
+  spawnById(id: string, ctx: HazardContext, view: View) {
     const def = HAZARDS.find(d => d.id === id)
-    if (def) this.spawn(ctx, view, fish, def)
+    if (def) this.spawn(ctx, view, def)
     return !!def
   }
 
-  /** What may spawn right now: unlocked, allowed in this view, and off cooldown. */
-  private eligible(ctx: HazardContext, view: View) {
+  /** What may spawn right now: unlocked and off cooldown. */
+  private eligible(ctx: HazardContext) {
     return HAZARDS.filter((d) => {
       if (d.minLevel > ctx.level) return false
-      if (d.views && !d.views.includes(view.id)) return false
       const last = this.lastSpawn.get(d.id)
       return !d.cooldown || last === undefined || this.clock - last >= d.cooldown
     })
   }
 
-  private spawn(ctx: HazardContext, view: View, fish: TankPoint, forced?: HazardDef) {
-    const def = forced ?? weightedPick(this.eligible(ctx, view), ctx.rand)
+  private spawn(ctx: HazardContext, view: View, forced?: HazardDef) {
+    const def = forced ?? weightedPick(this.eligible(ctx), ctx.rand)
     if (!def) return
     this.lastSpawn.set(def.id, this.clock)
 
@@ -123,13 +121,6 @@ export class HazardField {
       shadow: createShadow(1),
     }
     def.setup(h, ctx)
-    // In side views depth is invisible and doesn't collide, but it still shows
-    // through perspective. Put hazards on the fish's plane so what you see lines
-    // up with what hits. (Which hazards suit which view is its own question.)
-    if (!view.collide.z) {
-      h.pos.z = fish.z
-      if (h.data.baseZ !== undefined) h.data.baseZ = fish.z
-    }
     // Push past the spawn line by the hazard's own half-length so it never pops in on screen.
     h.pos.a += h.half.a
     h.mesh = def.build(h)

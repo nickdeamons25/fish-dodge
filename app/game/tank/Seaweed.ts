@@ -114,7 +114,7 @@ export class Seaweed {
     uFlow: { value: 1 },
     uMinX: { value: TANK.minA },
     uLen: { value: LEN },
-    uRear: { value: 0 },
+    uRear: { value: 1 },
   }
 
   constructor() {
@@ -196,15 +196,10 @@ export class Seaweed {
     this.mesh.userData.depthMaterial = depth
   }
 
-  /**
-   * `scroll` is total world travel; `flow` the current's direction (-1..1);
-   * `rear` how far the blades have turned to face the rear camera (0..1).
-   */
-  update(time: number, scroll: number, flow: number, rear: number) {
+  /** `scroll` is total world travel. */
+  update(time: number, scroll: number) {
     this.uniforms.uTime.value = time
     this.uniforms.uScroll.value = scroll
-    this.uniforms.uFlow.value = flow
-    this.uniforms.uRear.value = rear
   }
 }
 

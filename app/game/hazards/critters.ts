@@ -1,14 +1,13 @@
 import type * as THREE from 'three'
-import { flow } from '../tank/space'
 
 /**
- * Facing helpers for swimming hazards. Every model faces +X; call one of these
- * each frame so it points the right way whichever way the current runs.
+ * Facing helpers for swimming hazards. Every model faces +X; the current runs
+ * toward -X (hazards drift at the player), so call one of these each frame.
  */
 
 /** Point a +X-facing model against the current, i.e. toward the player. */
 export function faceUpstream(obj: THREE.Object3D) {
-  obj.rotation.y = flow.value > 0 ? Math.PI : 0
+  obj.rotation.y = Math.PI
 }
 
 /**
@@ -19,5 +18,5 @@ export function faceUpstream(obj: THREE.Object3D) {
  */
 export function faceTravel(obj: THREE.Object3D, speedFactor: number) {
   if (speedFactor >= 1) faceUpstream(obj)
-  else obj.rotation.y = flow.value > 0 ? 0 : Math.PI
+  else obj.rotation.y = 0
 }

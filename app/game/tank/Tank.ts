@@ -1,7 +1,6 @@
 import * as THREE from 'three'
 import { COLORS, TANK } from '../constants'
 import { excludeFromDepth } from '../engine/RenderPipeline'
-import { flow } from './space'
 import { Seaweed } from './Seaweed'
 import { backdropTexture, bubbleTexture, causticsTexture, sandTexture } from './textures'
 
@@ -149,8 +148,7 @@ export class Tank {
     this.group.add(this.bubbles)
   }
 
-  /** `rearFacing` (0..1): turn seaweed toward the rear-view camera. */
-  update(dt: number, speed: number, rearFacing = 0) {
+  update(dt: number, speed: number) {
     const step = speed * dt
     this.time += dt
 
@@ -161,9 +159,8 @@ export class Tank {
     this.backdrops[0]!.offset.x += (step * 0.3) / BACKDROP_TILE
     this.backdrops[1]!.offset.x -= (step * 0.3) / BACKDROP_TILE
 
-    // `step` goes negative when the current reverses; the shader wraps both ways.
     this.scroll += step
-    this.seaweed.update(this.time, this.scroll, flow.value, rearFacing)
+    this.seaweed.update(this.time, this.scroll)
 
     const attr = this.bubbles.geometry.getAttribute('position') as THREE.BufferAttribute
     const arr = attr.array as Float32Array

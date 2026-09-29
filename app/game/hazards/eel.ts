@@ -1,7 +1,6 @@
 import * as THREE from 'three'
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { addEyes, canvasTex } from '../entities/fishKit'
-import { flow } from '../tank/space'
 
 /**
  * Moray eel living in a rocky den.
@@ -347,7 +346,7 @@ const tmp = { a: new THREE.Vector3(), b: new THREE.Vector3() }
 /** Pose the eel risen `extension` above the hole. */
 export function poseEel(root: THREE.Object3D, extension: number, time: number, phase: number) {
   const u = root.userData.uniforms as EelUniforms
-  const face = flow.value > 0 ? -1 : 1 // world X direction toward the player
+  const face = -1 // world X direction toward the player
   u.uExt.value = extension
   u.uTime.value = time
   u.uPhase.value = phase

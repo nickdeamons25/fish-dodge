@@ -3,7 +3,7 @@ import { FISH, TANK } from '../constants'
 import type { Input } from '../engine/Input'
 import { excludeFromDepth } from '../engine/RenderPipeline'
 import { createShadow, placeShadow } from '../tank/shadow'
-import { dirToTank, flow, toWorld, type TankPoint } from '../tank/space'
+import { dirToTank, toWorld, type TankPoint } from '../tank/space'
 import type { View } from '../tank/views'
 import { buildFishModel, type SwimUniforms } from './fishModel'
 
@@ -132,7 +132,7 @@ export class Fish {
     }
 
     // Screen direction → world via the live camera basis → tank axes the view allows.
-    // Because this reads the real camera, controls stay screen-relative even mid-turn.
+    // Because this reads the real camera, controls stay screen-relative.
     const acc = { a: 0, y: 0, z: 0 }
     const mag = Math.min(1, Math.hypot(sx, sy))
     if (mag > 0) {
@@ -164,10 +164,6 @@ export class Fish {
     this.animateSwim(dt)
     toWorld(this.pos, this.mesh.position)
     placeShadow(this.shadow, this.pos)
-    // Face the way the current comes from. As it reverses (flow 1 → -1) the fish
-    // swings round through facing the camera: a U-turn, not a tank rotation.
-    this.mesh.rotation.y = (-Math.PI * (1 - flow.value)) / 2
-    const heading = flow.value < 0 ? -1 : 1
     const m = this.body
 
     if (this.dead) {
@@ -178,7 +174,7 @@ export class Fish {
 
     // Nose follows velocity: pitch with height, yaw with depth.
     m.rotation.z = clamp(-this.vel.y * 0.0016, -0.45, 0.45)
-    m.rotation.y = clamp(this.vel.z * 0.0016, -0.5, 0.5) * heading
+    m.rotation.y = clamp(this.vel.z * 0.0016, -0.5, 0.5)
     m.rotation.x = clamp(this.vel.z * 0.0008, -0.3, 0.3)
     this.blub(time)
 

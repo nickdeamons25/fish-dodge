@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { VIEWS } from '~/game/tank/views'
 import { useGameStore } from '~/stores/game'
 
 const store = useGameStore()
@@ -15,14 +14,7 @@ const store = useGameStore()
       <span class="label">Depth lvl</span>
       <span class="value">{{ store.run.level }}</span>
     </div>
-    <div class="stat view">
-      <span class="label">Tank</span>
-      <span class="value">{{ VIEWS[store.run.view].label }}</span>
-    </div>
-    <!-- Turn warning sits in the bar's free middle so it never covers the tank. -->
-    <div class="center">
-      <TurnWarning />
-    </div>
+    <div class="center" />
     <div class="lives" :aria-label="`${store.run.lives} lives`">
       <span v-for="i in store.maxLives" :key="i" class="heart" :class="{ lost: i > store.run.lives }">♥</span>
     </div>
@@ -63,11 +55,6 @@ const store = useGameStore()
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.view .value {
-  font-size: 15px;
-  line-height: 26px;
-  white-space: nowrap;
-}
 .center {
   flex: 1;
   min-width: 0;
@@ -93,7 +80,6 @@ const store = useGameStore()
   .stat { padding: 2px 8px; min-width: 0; }
   .label { font-size: 9px; }
   .value { font-size: 15px; }
-  .view { display: none; }
   .lives { font-size: 18px; }
   .pause { width: 30px; height: 30px; }
 }

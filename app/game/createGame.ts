@@ -6,7 +6,7 @@ import { Input } from './engine/Input'
 import { RenderPipeline } from './engine/RenderPipeline'
 import { FishGame } from './FishGame'
 import { Tank } from './tank/Tank'
-import { VIEWS, type ViewId } from './tank/views'
+import { REAR } from './tank/views'
 
 export interface GameHandle {
   onStatus: (status: GameStatus, prev: GameStatus) => void
@@ -31,7 +31,7 @@ export function createGame(parent: HTMLElement, store: GameStore): GameHandle {
   scene.fog = fog
 
   const camera = new THREE.PerspectiveCamera(30, 16 / 9, 5, 6000)
-  const rig = new CameraRig(camera, fog, VIEWS['side-right'].camera)
+  const rig = new CameraRig(camera, fog, REAR.camera)
   const pipeline = new RenderPipeline(renderer, scene, camera)
 
   const resize = () => {
@@ -108,15 +108,10 @@ export function createGame(parent: HTMLElement, store: GameStore): GameHandle {
     }
     ;(window as unknown as { __pipeline: RenderPipeline }).__pipeline = pipeline
 
-    // Dev shortcuts: T forces a random tank turn; 1–4 force a specific view.
-    const byDigit: ViewId[] = ['side-right', 'side-left', 'top', 'rear']
     onDevKey = (e) => {
       if ((e.target as HTMLElement)?.tagName === 'INPUT') return
-      if (e.code === 'KeyT') game.beginTurn()
       if (e.code === 'KeyF' && perf) perf.el.style.display = perf.el.style.display === 'none' ? 'block' : 'none'
       if (e.code === 'KeyQ') pipeline.post = !pipeline.post
-      const n = Number(e.key)
-      if (n >= 1 && n <= 4) game.beginTurn(byDigit[n - 1])
     }
     window.addEventListener('keydown', onDevKey)
     ;(window as unknown as { __fishGame: FishGame }).__fishGame = game
