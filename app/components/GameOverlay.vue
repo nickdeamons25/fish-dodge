@@ -3,6 +3,8 @@ import { useGameStore } from '~/stores/game'
 
 const store = useGameStore()
 const nameDraft = ref(store.profile.name)
+/** Only phones and tablets get the tilt option. */
+const canTilt = tiltSupported()
 
 function play() {
   store.setName(nameDraft.value)
@@ -22,10 +24,14 @@ function play() {
           <input v-model="nameDraft" maxlength="16" @keydown.enter="play">
         </label>
         <button class="primary" @click="play">Swim!</button>
+        <TiltToggle v-if="canTilt" />
         <p v-if="store.profile.highScore" class="meta">
           Best: <strong>{{ store.profile.highScore }}</strong> · Runs: {{ store.profile.totalRuns }}
         </p>
-        <p class="controls">← → turn · ↑ ↓ up and down · hold mouse or touch to steer · P to pause</p>
+        <p v-if="canTilt" class="controls">
+          {{ store.tiltOn ? 'Tip the phone to turn · tilt it toward you to rise · or hold a finger where you want to go' : 'Hold a finger where you want to go' }}
+        </p>
+        <p v-else class="controls">← → turn · ↑ ↓ up and down · hold mouse or touch to steer · P to pause</p>
       </div>
 
       <!-- Paused -->
@@ -41,6 +47,7 @@ function play() {
         <p class="big">{{ store.run.score }}</p>
         <p class="meta">{{ store.profile.name }} swam {{ Math.floor(store.run.distance) }}m · best {{ store.profile.highScore }}</p>
         <button class="primary" @click="store.startRun()">Swim again</button>
+        <TiltToggle v-if="canTilt" />
         <button class="ghost" @click="store.backToMenu()">Menu</button>
       </div>
     </div>

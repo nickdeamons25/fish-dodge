@@ -56,6 +56,7 @@ export class FishGame {
     switch (status) {
       case 'playing':
         if (prev !== 'paused') this.startRun()
+        else this.d.input.calibrateTilt() // the phone may have been put down while paused
         break
       case 'gameover':
         this.running = false
@@ -71,6 +72,9 @@ export class FishGame {
 
   private startRun() {
     this.resetWorld()
+    // Tilt steering levels itself to however the phone is held right now.
+    this.d.input.tiltEnabled = this.d.store.tiltOn
+    this.d.input.calibrateTilt()
     this.fish.controllable = true
     this.distancePx = 0
     this.level = 1

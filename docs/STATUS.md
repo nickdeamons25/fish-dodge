@@ -39,7 +39,15 @@ _Last updated: 2026-09-25_
 > Hazards never spawn on coral. The level-up wall and the big rock stacks were tried and removed.
 > **Difficulty is only enemy frequency** (spawn interval shrinks each level) **and fish speed** (ramps
 > with distance); the hazard pool is rock, jellyfish, blue fish, pufferfish and eel.
-> Next: phone tilt (step 4).
+> **Step 4 (phone tilt) done.** `engine/Input.ts` turns `deviceorientation` readings into
+> gravity in the screen's frame (so either landscape works), smoothed: tip the phone left/right
+> to turn (dead zone 3°, full at 25°), tilt the top edge toward you to rise / away to dive
+> (4°–18°, measured from the pose at the start of the run, and again after resuming from pause
+> or rotating the phone). Keys and a held finger override tilt. The menu and game-over cards
+> show a "Tilt to steer" toggle on touch devices (`components/TiltToggle.vue`; remembered in the
+> profile, on by default). iOS motion permission is requested from the Swim!/Swim again tap
+> (`utils/tilt.ts`, called in `store.startRun`); if it's refused, a note says to steer by touch.
+> Tested with synthetic readings in portrait and landscape; the real iOS prompt needs a phone.
 > Sections 2, 3, 8 and 9 below still describe the pre-refactor game. That version is saved as
 > branch `_version/alpha` and tag `alpha`.
 

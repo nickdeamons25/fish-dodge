@@ -136,6 +136,12 @@ export class Fish {
           climb = -dy / dist
         }
       }
+
+      // Phone tilt, when nothing else is steering.
+      if (turn === 0 && climb === 0 && !input.pointer.isDown && input.tiltActive) {
+        turn = input.tilt.turn
+        climb = input.tilt.climb
+      }
     }
     else {
       // Attract mode (menu): a lazy circle, bobbing about mid-height.

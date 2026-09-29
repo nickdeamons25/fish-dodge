@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { requestTiltPermission, tiltSupported, type TiltPermission } from '~/utils/tilt'
 
 export type GameStatus = 'menu' | 'playing' | 'paused' | 'gameover'
 
@@ -8,6 +9,8 @@ export interface PlayerProfile {
   highScore: number
   totalRuns: number
   bestDistance: number
+  /** Steer by tilting the phone (touch devices only). */
+  tilt: boolean
 }
 
 /** State for the run currently in progress. Reset on every new run. */
@@ -29,7 +32,7 @@ function freshRun(): RunState {
 }
 
 function loadProfile(): PlayerProfile {
-  const fallback: PlayerProfile = { name: 'Finn', highScore: 0, totalRuns: 0, bestDistance: 0 }
+  const fallback: PlayerProfile = { name: 'Finn', highScore: 0, totalRuns: 0, bestDistance: 0, tilt: tiltSupported() }
   try {
     const raw = localStorage.getItem(PROFILE_KEY)
     return raw ? { ...fallback, ...JSON.parse(raw) } : fallback
@@ -46,10 +49,14 @@ export const useGameStore = defineStore('game', {
     run: freshRun(),
     maxLives: MAX_LIVES,
     lastRunWasHighScore: false,
+    /** Whether the browser has let us read the phone's tilt. */
+    tiltPermission: 'unknown' as TiltPermission,
   }),
 
   getters: {
     isPlaying: s => s.status === 'playing',
+    /** Tilt steering is on and allowed (readings may still be on their way). */
+    tiltOn: s => s.profile.tilt && tiltSupported() && s.tiltPermission !== 'denied',
   },
 
   actions: {
@@ -59,7 +66,17 @@ export const useGameStore = defineStore('game', {
       this.saveProfile()
     },
 
+    setTilt(on: boolean) {
+      this.profile.tilt = on
+      this.saveProfile()
+      if (on && this.tiltPermission === 'denied') this.tiltPermission = 'unknown' // let them try again
+    },
+
+    /** Call straight from a tap or click: on iOS, that's the only time the motion prompt may show. */
     startRun() {
+      if (this.profile.tilt && tiltSupported() && this.tiltPermission !== 'granted') {
+        requestTiltPermission().then(p => (this.tiltPermission = p))
+      }
       this.run = freshRun()
       this.lastRunWasHighScore = false
       this.status = 'playing'
