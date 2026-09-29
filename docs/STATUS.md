@@ -43,8 +43,10 @@ _Last updated: 2026-09-25_
 > gravity in the screen's frame (so either landscape works), smoothed: tip the phone left/right
 > to turn (dead zone 3°, full at 25°), tilt the top edge away to rise / toward you to dive, like
 > a joystick (dead zone 8°, full at 30° on an ease-in curve; measured from the pose at the start
-> of the run, after resuming from pause or rotating, and slowly re-levelling over ~6 s so a
-> sagging hand doesn't drift the fish). Keys and a held finger override tilt. The menu and game-over cards
+> of the run, after resuming from pause or rotating, and slowly re-levelling over ~6 s while held
+> within 12° of level, so a sagging hand doesn't drift the fish but a deliberate tilt holds).
+> A held tilt **builds up** (climb over ~1.2 s, turn over ~0.6 s; easing off settles in ~0.15 s),
+> and climb speed is proportional to the input, so a bigger move takes a longer, bigger tilt. Keys and a held finger override tilt. The menu and game-over cards
 > show a "Tilt to steer" toggle on touch devices (`components/TiltToggle.vue`; remembered in the
 > profile, on by default). iOS motion permission is requested from the Swim!/Swim again tap
 > (`utils/tilt.ts`, called in `store.startRun`); if it's refused, a note says to steer by touch.
@@ -112,7 +114,7 @@ Files: `app/game/createGame.ts`, `engine/RenderPipeline.ts`, `engine/DofPass.ts`
   - **Strength by view:** full in side views and mid-turn; 0.2 in top-down and rear.
   - **Foreground:** blurs at 35% of the background amount.
   - **Opt-outs:** objects can opt out (`excludeFromDepth`), supply their own deforming depth material (`userData.depthMaterial`), or pull themselves toward the focal plane (`biasDepthToFocus`; jellyfish keep 40%).
-- **Adaptive resolution:** watches GPU time once a second and lowers render scale (down to 60%) if it goes over 12 ms.
+- **Adaptive resolution:** watches GPU time (or frame time where there's no GPU timer, e.g. iOS) once a second and lowers render scale (down to 60%) if it goes over budget. It only resizes the post-processing targets, never the canvas (resizing a canvas blanks it: that was the phone "blink"), drops at most every 3 s, and only climbs back after 6 s of headroom and 10 s since the last change.
 - **Colour note:** the post-processing target blends transparency in linear space, so overlay opacities in `tank/` are tuned for that.
 - **Performance (2× pixel density display):** a steady 60 fps. GPU time is typically 6–10 ms with 6–11 detailed hazards on screen, against a 16.7 ms budget.
 - **Dev tools (dev builds only):** F toggles the perf overlay; Q toggles post-processing.

@@ -155,9 +155,11 @@ export class Fish {
     this.heading = wrapAngle(this.heading + this.turnRate * dt)
 
     if (this.controllable) {
-      if (climb !== 0) this.vy += climb * FISH.accel * dt
-      else this.vy -= Math.sign(this.vy) * Math.min(Math.abs(this.vy), FISH.drag * dt)
-      this.vy = clamp(this.vy, -FISH.maxSpeed, FISH.maxSpeed)
+      // Climb speed follows how hard you're steering (half a tilt, half speed),
+      // speeding up at `accel` and easing off at `drag`.
+      const want = climb * FISH.maxSpeed
+      const rate = Math.abs(want) > Math.abs(this.vy) && Math.sign(want) === Math.sign(this.vy || want) ? FISH.accel : FISH.drag
+      this.vy += clamp(want - this.vy, -rate * dt, rate * dt)
       this.pos.y += this.vy * dt
       if (this.pos.y < this.half.y || this.pos.y > TANK.height - this.half.y) {
         this.pos.y = clamp(this.pos.y, this.half.y, TANK.height - this.half.y)

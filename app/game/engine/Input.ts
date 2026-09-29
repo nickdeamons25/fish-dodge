@@ -13,10 +13,20 @@ const TILT = {
   climbCurve: 1.7,
   /**
    * Seconds for "level" to drift to however the phone is held now, so a hand
-   * that slowly sags doesn't leave the fish diving. Slow enough that a
-   * deliberate tilt still holds for as long as it takes to cross the tank.
+   * that slowly sags doesn't leave the fish diving. Only while the phone is
+   * within `relevelWithin` degrees of level: a deliberate tilt is left alone,
+   * however long it's held.
    */
   relevelSeconds: 6,
+  relevelWithin: 12,
+  /**
+   * Holding a tilt builds up over time: seconds for turn and climb to grow to
+   * what the tilt asks for, so a bigger move takes a longer tilt. Letting go
+   * (or easing off) settles much faster, so stopping still feels immediate.
+   */
+  turnBuild: 0.6,
+  climbBuild: 1.2,
+  release: 0.15,
   /** Smoothing per reading (0..1): higher follows the hand faster, lower hides sensor jitter. */
   follow: 0.35,
   /** Readings older than this mean tilt has stopped (sensor off, tab hidden). */
@@ -83,6 +93,7 @@ export class Input {
   calibrateTilt() {
     this.neutralPitch = null
     this.gravity = null
+    this.tilt.turn = this.tilt.climb = 0
   }
 
   destroy() {
@@ -116,17 +127,28 @@ export class Input {
     // Forward/back: the angle of gravity between "down the screen" and "into it".
     const pitch = Math.atan2(grav.z, -grav.y) / DEG
     this.neutralPitch ??= pitch
-    this.neutralPitch += (pitch - this.neutralPitch) * Math.min(1, dt / TILT.relevelSeconds)
+    if (Math.abs(pitch - this.neutralPitch) < TILT.relevelWithin) {
+      this.neutralPitch += (pitch - this.neutralPitch) * Math.min(1, dt / TILT.relevelSeconds)
+    }
     // Left edge down leans gravity toward -x: turn left.
-    this.tilt.turn = shape(-side, TILT.turnDead, TILT.turnFull)
+    this.tilt.turn = build(this.tilt.turn, shape(-side, TILT.turnDead, TILT.turnFull), TILT.turnBuild, dt)
     // Top edge away from you lowers the pitch: swim up.
-    this.tilt.climb = shape(this.neutralPitch - pitch, TILT.climbDead, TILT.climbFull, TILT.climbCurve)
+    this.tilt.climb = build(this.tilt.climb, shape(this.neutralPitch - pitch, TILT.climbDead, TILT.climbFull, TILT.climbCurve), TILT.climbBuild, dt)
   }
 
   private on(target: EventTarget, type: string, fn: EventListener) {
     target.addEventListener(type, fn)
     this.listeners.push([target, type, fn])
   }
+}
+
+/**
+ * Ease `current` toward `target`: slowly (over `seconds`) while the tilt is
+ * asking for more in the same direction, quickly when it eases off or flips.
+ */
+function build(current: number, target: number, seconds: number, dt: number) {
+  const growing = Math.abs(target) > Math.abs(current) && Math.sign(target) !== -Math.sign(current)
+  return current + (target - current) * (1 - Math.exp(-dt / (growing ? seconds : TILT.release)))
 }
 
 /** Degrees → -1..1, with a dead zone round zero, full strength past `full`, and an optional ease-in curve. */

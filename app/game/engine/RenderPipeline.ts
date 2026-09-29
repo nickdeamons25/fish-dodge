@@ -17,6 +17,13 @@ const MAX_BLUR = 0.009
 /** Adaptive resolution: aim for this much GPU time per frame (60 fps = 16.7 ms). */
 const GPU_BUDGET_MS = 12
 const SCALE = { min: 0.6, max: 1, step: 0.1 }
+/**
+ * Resolution changes are hitches (the render targets are re-allocated), so
+ * they're rare and never ping-pong: drop at most every `downEvery` seconds,
+ * and only come back up after `upAfter` seconds of steady headroom and at
+ * least `upEvery` since the last change.
+ */
+const ADAPT = { downEvery: 3, upAfter: 6, upEvery: 10 }
 
 export interface FrameStats {
   fps: number
@@ -57,6 +64,8 @@ export class RenderPipeline {
   private gpuSamples: number[] = []
   private frameSamples: number[] = []
   private sinceAdapt = 0
+  private sinceChange = Infinity
+  private headroom = 0
 
   constructor(private renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera) {
     this.gl = renderer.getContext() as WebGL2RenderingContext
@@ -74,6 +83,10 @@ export class RenderPipeline {
   setSize(width: number, height: number) {
     this.width = width
     this.height = height
+    // The canvas itself is only ever sized here, at full resolution: resizing a
+    // canvas clears it, which flashes a blank frame (see applyResolution).
+    this.renderer.setPixelRatio(this.baseRatio)
+    this.renderer.setSize(width, height)
     this.applyResolution()
   }
 
@@ -96,11 +109,13 @@ export class RenderPipeline {
     this.track(dt)
   }
 
+  /**
+   * Render scale only changes the post-processing targets; the last pass
+   * stretches the result over the full-size canvas. So a change never
+   * touches the canvas and never blinks.
+   */
   private applyResolution() {
-    const ratio = this.baseRatio * this.scale
-    this.renderer.setPixelRatio(ratio)
-    this.renderer.setSize(this.width, this.height)
-    this.composer.setPixelRatio(ratio)
+    this.composer.setPixelRatio(this.baseRatio * this.scale)
     this.composer.setSize(this.width, this.height)
   }
 
@@ -144,18 +159,20 @@ export class RenderPipeline {
     // Re-evaluate once a second. With GPU timing we can aim precisely; without
     // it, missed vsyncs (frames well over 16.7 ms) are the only signal.
     this.sinceAdapt += dt
+    this.sinceChange += dt
     if (this.sinceAdapt < 1) return
     this.sinceAdapt = 0
+    const over = gpuMs !== null ? gpuMs > GPU_BUDGET_MS : frameMs > 18.5
+    const spare = gpuMs !== null ? gpuMs < GPU_BUDGET_MS * 0.6 : frameMs < 17.2
+    this.headroom = spare ? this.headroom + 1 : 0
     let next = this.scale
-    if (gpuMs !== null) {
-      if (gpuMs > GPU_BUDGET_MS) next -= SCALE.step
-      else if (gpuMs < GPU_BUDGET_MS * 0.6) next += SCALE.step
-    }
-    else if (frameMs > 18.5) next -= SCALE.step
-    else if (frameMs < 17.2) next += SCALE.step / 2
+    if (over && this.sinceChange >= ADAPT.downEvery) next -= SCALE.step
+    else if (this.headroom >= ADAPT.upAfter && this.sinceChange >= ADAPT.upEvery) next += SCALE.step
     next = THREE.MathUtils.clamp(Math.round(next * 100) / 100, SCALE.min, SCALE.max)
     if (next !== this.scale) {
       this.scale = next
+      this.sinceChange = 0
+      this.headroom = 0
       this.applyResolution()
     }
   }
