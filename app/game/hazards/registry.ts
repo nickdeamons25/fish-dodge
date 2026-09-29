@@ -4,7 +4,6 @@ import { forward, right, type TankPoint } from '../tank/space'
 import { faceTravel } from './critters'
 import { buildEel, poseEel } from './eel'
 import { animateJelly, buildJelly } from './jellyfish'
-import { buildCoralBank, buildRockStack, layoutCoralBank, type SolidPart } from './obstacles'
 import { PUFFER_GROWTH, animateBlueFish, buildBlueFish, buildPuffer, posePuffer } from './swimmers'
 
 export interface HazardContext {
@@ -35,12 +34,6 @@ export interface Hazard {
   /** Free-form per-instance state for behaviours. */
   data: Record<string, number>
   mesh: THREE.Object3D
-  /**
-   * Solid obstacles (big rocks, coral banks) have a shape instead of just a
-   * hitbox: they push the fish out rather than letting it through (see
-   * obstacles.ts). `half` still bounds them, for spacing and despawning.
-   */
-  solid?: SolidPart[]
 }
 
 /**
@@ -298,48 +291,4 @@ const eel: HazardDef = {
   },
 }
 
-// ---- Solid obstacles: steer round them ---------------------------------------
-
-/** A sea stack: a pile of boulders from the sand to the surface, too tall to swim over. */
-const bigRock: HazardDef = {
-  id: 'big-rock',
-  minLevel: 1,
-  weight: 0.7,
-  speedFactor: 1,
-  cooldown: 6,
-  setup(h, { rand }) {
-    const r = range(rand, 130, 210)
-    h.half = { a: r, y: H / 2, z: r }
-    h.solid = [{ kind: 'circle', a: 0, z: 0, r }]
-    h.data.seed = Math.floor(rand() * 1e6)
-  },
-  build: h => buildRockStack(h.solid![0] as Extract<SolidPart, { kind: 'circle' }>, rockGeos, h.data.seed!),
-}
-
-/** Coral laid out per bank at setup, kept for build. */
-const bankCorals = new WeakMap<Hazard, ReturnType<typeof layoutCoralBank>['corals']>()
-
-/**
- * A coral bank across your path: a row of big corals on a rocky ridge. Go
- * round an end, or over the low stretches.
- */
-const coralBank: HazardDef = {
-  id: 'coral-bank',
-  minLevel: 1,
-  weight: 0.6,
-  speedFactor: 1,
-  cooldown: 8,
-  setup(h, { rand }) {
-    const half = range(rand, 250, 450)
-    const { corals, parts } = layoutCoralBank(half, rand)
-    const reach = Math.max(...corals.map(c => c.width / 2))
-    h.half = { a: reach, y: H / 2, z: half + reach }
-    h.solid = parts
-    h.data.half = half
-    h.data.seed = Math.floor(rand() * 1e6)
-    bankCorals.set(h, corals)
-  },
-  build: h => buildCoralBank(bankCorals.get(h)!, h.data.half!, rockGeos, h.data.seed!),
-}
-
-export const HAZARDS: HazardDef[] = [rock, jellyfish, blueFish, puffer, eel, bigRock, coralBank]
+export const HAZARDS: HazardDef[] = [rock, jellyfish, blueFish, puffer, eel]

@@ -1,8 +1,8 @@
 import * as THREE from 'three'
 import { SPAWN, TANK } from '../constants'
 import { createShadow, placeShadow } from '../tank/shadow'
+import type { CoralBanks } from '../tank/CoralBanks'
 import { forward, headingOf, right, toWorld, wrapAngle, type TankPoint } from '../tank/space'
-import { contact, near } from './obstacles'
 import { HAZARDS, type Hazard, type HazardContext, type HazardDef } from './registry'
 
 /** Seconds for a cleared hazard to shrink away. */
@@ -11,12 +11,6 @@ const VANISH = 0.3
 const CAMERA_BACK = 330
 /** Homing swimmers stop turning once the fish is this close ahead, and commit to their line. */
 const HOMING_COMMIT = 300
-/**
- * What the fish hit when it met a solid obstacle, and how to push it back
- * out: along a world direction across the floor, or straight up if it only
- * grazed the top.
- */
-export interface SolidHit { hazard: Hazard, nx: number, nz: number, up: boolean, depth: number }
 
 interface Live extends Hazard {
   /** Turned to the hazard's heading and placed in the tank; holds the def's mesh. */
@@ -38,7 +32,8 @@ export class HazardField {
   private lastSpawn = new Map<string, number>()
   private readonly group = new THREE.Group()
 
-  constructor(scene: THREE.Scene) {
+  /** `corals`: the permanent coral banks, which hazards never spawn on. */
+  constructor(scene: THREE.Scene, private corals: CoralBanks) {
     scene.add(this.group)
   }
 
@@ -88,7 +83,7 @@ export class HazardField {
       const dz = h.pos.z - ctx.fish.z
       const reach = Math.max(h.half.a, h.half.z)
       const behind = dx * fwd.x + dz * fwd.z < -(CAMERA_BACK + SPAWN.despawnBehind + reach)
-      const far = Math.hypot(dx, dz) > SPAWN.despawnFar + (h.solid ? reach : 0)
+      const far = Math.hypot(dx, dz) > SPAWN.despawnFar
       const gone = behind || far || (h.vanishing !== undefined && h.vanishing <= 0)
       if (gone) this.remove(h)
       return !gone
@@ -102,7 +97,6 @@ export class HazardField {
       h.def.animate?.(h, time)
       const k = h.vanishing !== undefined ? Math.max(0.001, h.vanishing / VANISH) : 1
       h.frame.scale.setScalar(k)
-      if (h.solid) continue // rocks and coral meet the sand; no blob shadow
       // Hitboxes can change size (pufferfish, eels), so the shadow follows.
       h.shadow.userData.radius = Math.max(h.half.a, h.half.z) * 1.1
       placeShadow(h.shadow, h.pos, h.heading)
@@ -116,7 +110,7 @@ export class HazardField {
    */
   hitTest(pos: TankPoint, half: { a: number, y: number, z: number }, heading: number): Hazard | undefined {
     return this.live.find((h) => {
-      if (h.vanishing !== undefined || h.solid) return false
+      if (h.vanishing !== undefined) return false
       forward(h.heading, fwd)
       right(h.heading, side)
       const dx = pos.x - h.pos.x
@@ -128,24 +122,6 @@ export class HazardField {
         && Math.abs(dx * side.x + dz * side.z) < h.half.z + s * half.a + c * half.z
     })
   }
-
-  /** The deepest solid obstacle the fish's box is in, and which way to push it back out. */
-  solidContact(pos: TankPoint, half: { a: number, y: number, z: number }, heading: number): SolidHit | undefined {
-    let best: SolidHit | undefined
-    for (const h of this.live) {
-      if (!h.solid || h.vanishing !== undefined) continue
-      const { la, lz } = toLocal(h, pos.x, pos.z)
-      const c = Math.abs(Math.cos(heading - h.heading))
-      const s = Math.abs(Math.sin(heading - h.heading))
-      const hit = contact(h.solid, la, lz, c * half.a + s * half.z, s * half.a + c * half.z, pos.y - half.y)
-      if (!hit || (best && hit.depth <= best.depth)) continue
-      forward(h.heading, fwd)
-      right(h.heading, side)
-      best = { hazard: h, nx: fwd.x * hit.na + side.x * hit.nz, nz: fwd.z * hit.na + side.z * hit.nz, up: hit.up, depth: hit.depth }
-    }
-    return best
-  }
-
 
   /**
    * Turn a swimmer toward the fish, a little at a time. Only while the fish is
@@ -164,14 +140,6 @@ export class HazardField {
   private remove(h: Live) {
     this.group.remove(h.frame, h.shadow)
     ;(h.shadow.material as THREE.Material).dispose() // each shadow owns its material for per-hazard opacity
-    // Obstacle meshes are built per instance: rock stacks merge their own
-    // geometry, coral banks share each species' and only own their instances.
-    if (h.solid) {
-      h.mesh.traverse((o) => {
-        if ((o as THREE.InstancedMesh).isInstancedMesh) (o as THREE.InstancedMesh).dispose()
-        else if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).geometry.dispose()
-      })
-    }
   }
 
   /** Spawn a specific hazard now, ignoring level and cooldown rules (dev/testing). */
@@ -192,7 +160,7 @@ export class HazardField {
   /**
    * Spawn out ahead, in view: along the camera's heading, led a little into
    * any turn, somewhere within `SPAWN.lateral` of that line, clear of the
-   * glass, the mound and other hazards. A few tries; false if there's no room.
+   * glass, the mound, the coral and other hazards. A few tries; false if there's no room.
    */
   private spawn(ctx: HazardContext, forced?: HazardDef) {
     const def = forced ?? weightedPick(this.eligible(ctx), ctx.rand)
@@ -226,7 +194,6 @@ export class HazardField {
     toWorld(h.pos, h.frame.position)
     h.frame.rotation.y = h.heading
     h.shadow.userData.radius = Math.max(h.half.a, h.half.z) * 1.1
-    h.shadow.visible = !h.solid
     this.group.add(h.frame, h.shadow)
     this.live.push(h)
   }
@@ -248,66 +215,23 @@ export class HazardField {
 
       const r = Math.hypot(x, z)
       if (r > TANK.radius - SPAWN.glassClearance - reach || r < TANK.mound.radius + reach + 40) continue
-      // Obstacles are checked by their whole shape once placed, below.
-      if ((!h.solid && this.crowded(x, z, reach)) || this.hidden(ctx.fish, x, z)) continue
+      if (this.crowded(x, z, reach)) continue
 
       h.pos.x = x
       h.pos.z = z
       h.heading = wrapAngle(bearing)
-      // An obstacle mustn't land on anything, even by its far end.
-      if (h.solid && this.overlapsOthers(h)) continue
       return true
     }
     return false
   }
 
-  /** Whether a placed obstacle's shape comes within spacing of any other hazard. */
-  private overlapsOthers(obstacle: Live) {
-    return this.live.some((o) => {
-      if (o.solid) return Math.hypot(o.pos.x - obstacle.pos.x, o.pos.z - obstacle.pos.z) < Math.max(o.half.a, o.half.z) + Math.max(obstacle.half.a, obstacle.half.z) + SPAWN.separation
-      const { la, lz } = toLocal(obstacle, o.pos.x, o.pos.z)
-      return near(obstacle.solid!, la, lz, Math.max(o.half.a, o.half.z) + SPAWN.separation)
-    })
-  }
-
-  /** Too close to another hazard (by its shape, for obstacles). */
+  /** Too close to another hazard, or on the coral. */
   private crowded(x: number, z: number, reach: number) {
-    return this.live.some((o) => {
-      if (o.solid) {
-        const { la, lz } = toLocal(o, x, z)
-        return near(o.solid, la, lz, reach + SPAWN.separation)
-      }
-      return Math.hypot(o.pos.x - x, o.pos.z - z) < reach + Math.max(o.half.a, o.half.z) + SPAWN.separation
-    })
+    return this.corals.near(x, z, reach + SPAWN.separation)
+      || this.live.some(o => Math.hypot(o.pos.x - x, o.pos.z - z) < reach + Math.max(o.half.a, o.half.z) + SPAWN.separation)
   }
 
-  /** Behind an obstacle as seen from the fish: pointless to spawn there, and you'd never see it. */
-  private hidden(fish: TankPoint, x: number, z: number) {
-    const solids = this.live.filter(o => o.solid && o.vanishing === undefined)
-    if (!solids.length) return false
-    const steps = Math.ceil(Math.hypot(x - fish.x, z - fish.z) / 80)
-    for (let i = 1; i < steps; i++) {
-      const px = fish.x + ((x - fish.x) * i) / steps
-      const pz = fish.z + ((z - fish.z) * i) / steps
-      for (const o of solids) {
-        const { la, lz } = toLocal(o, px, pz)
-        if (near(o.solid!, la, lz, 0)) return true
-      }
-    }
-    return false
-  }
 }
-
-/** A point in the tank → a hazard's own frame: along its heading (a), and across (z). */
-function toLocal(h: Hazard, x: number, z: number) {
-  const f = forward(h.heading, tmpF)
-  const s = right(h.heading, tmpS)
-  const dx = x - h.pos.x
-  const dz = z - h.pos.z
-  return { la: dx * f.x + dz * f.z, lz: dx * s.x + dz * s.z }
-}
-const tmpF = new THREE.Vector3()
-const tmpS = new THREE.Vector3()
 
 function weightedPick(defs: HazardDef[], rand: () => number) {
   const total = defs.reduce((sum, d) => sum + d.weight, 0)

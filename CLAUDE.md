@@ -11,5 +11,5 @@ Nuxt 4 SPA + Pinia + three.js dodge game. **Read `docs/STATUS.md` first** for wh
 - **Models:** every model faces +X with Y up. Detailed fish use `app/game/entities/fishKit.ts` (`BodyProfile`, `swimUniforms`, `skinMaterial`, `finMaterial`, `finGeometry`, `addEyes`, `swimMesh`).
 - **Depth of field:** anything that deforms in a vertex shader must set `mesh.userData.depthMaterial`, a depth material with the same patch, or it blurs wrongly. See `engine/DofPass.ts`. For see-through or cut-out objects, use `excludeFromDepth`.
 - **Assets:** no binary assets. Textures are painted in canvas, and each species shares its geometry and textures.
-- **New hazards:** add a `HazardDef` in `app/game/hazards/registry.ts` (`cooldown`, `minLevel`, `weight`, `speedFactor`, `homing`). Obstacles you steer round (or over) set `h.solid` (parts from `hazards/obstacles.ts`, each with a `top` height) in `setup`.
+- **New hazards:** add a `HazardDef` in `app/game/hazards/registry.ts` (`cooldown`, `minLevel`, `weight`, `speedFactor`, `homing`). Difficulty comes only from spawn frequency and fish speed. Solid terrain (the coral banks) is permanent scenery in `tank/CoralBanks.ts`, not a hazard.
 - **Transparency:** overlay opacities are tuned for linear-space blending in the post-processing target.

@@ -45,7 +45,7 @@ export class FishGame {
 
   constructor(private d: GameDeps) {
     this.fish = new Fish(d.scene)
-    this.field = new HazardField(d.scene)
+    this.field = new HazardField(d.scene, d.tank.corals)
     this.onStatus(d.store.status, 'menu')
   }
 
@@ -102,7 +102,7 @@ export class FishGame {
     if (this.running) {
       this.distancePx += this.speed * dt
       const metres = this.distancePx / PX_PER_METRE
-      // Levels only make it harder by spawning faster (HazardField) while the speed ramps up.
+      // Difficulty is just enemy frequency (spawns come faster each level; HazardField) and the speed ramp.
       this.level = 1 + Math.floor(metres / METRES_PER_LEVEL)
       this.speed = Math.min(SPEED.max, SPEED.start + metres * SPEED.rampPerMetre)
 
@@ -129,7 +129,7 @@ export class FishGame {
     this.d.tank.update(dt, this.fish.pos, this.d.rig.yaw)
     this.bumpGlass()
     this.bumpMound()
-    this.bumpSolids()
+    this.bumpCoral()
     this.glassAhead = this.running && this.secondsToGlass() < FISH.glassWarnSeconds
 
     this.field.update(dt, this.time, this.hazardContext(), this.running)
@@ -181,11 +181,11 @@ export class FishGame {
   }
 
   /**
-   * Big rocks and coral: never swum through, even while blinking. Out the way
-   * it came (or up, if it only scraped the top of some coral), and it hurts.
+   * The coral banks: never swum through, even while blinking. Out the way it
+   * came (or up, if it only scraped the top of some coral), and it hurts.
    */
-  private bumpSolids() {
-    const hit = this.field.solidContact(this.fish.pos, this.fish.half, this.fish.heading)
+  private bumpCoral() {
+    const hit = this.d.tank.corals.contact(this.fish.pos, this.fish.half, this.fish.heading)
     if (!hit) return
     if (hit.up) {
       this.fish.pos.y += hit.depth
@@ -211,7 +211,7 @@ export class FishGame {
     if (back) this.onBump(back)
   }
 
-  /** Swam into the glass, the mound or an obstacle: it hurts like a hazard, unless still blinking from the last hit. */
+  /** Swam into the glass, the mound or the coral: it hurts like a hazard, unless still blinking from the last hit. */
   private onBump(back: { x: number, z: number } | undefined) {
     if (this.running && !this.fish.isInvulnerable) this.onHit(undefined, back)
     else this.d.rig.shake(0.15, 4)

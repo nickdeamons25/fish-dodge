@@ -29,16 +29,16 @@ _Last updated: 2026-09-25_
 > fish. Swimmers home in (`HazardDef.homing`: blue fish 0.9 rad/s, puffer 0.6) until the fish is
 > within 300 or off to the side, then hold their line so you can still dodge. Hazards despawn
 > once behind the camera, so nothing vanishes in view mid-turn.
-> **Step 3 (obstacles) done, then simplified.** Solid obstacles (`hazards/obstacles.ts`) have a
-> shape of circles/boxes in their hazard frame, each standing from the sand up to its own `top`.
-> They always push the fish back out, even while it's blinking (mirroring its heading, or lifting
-> it if it only grazed a top) and cost a life (`HazardField.solidContact`, `FishGame.bumpSolids`).
-> **Big rocks** (sea stacks to the surface, r 130–210) and **coral banks** (`coral-bank`: a row of
-> big static corals on a low rocky ridge, 500–900 long — branching bushes, tree corals, sea fans
-> and ruffled lettuce coral from `hazards/corals.ts`, one shared geometry per species, instanced
-> with vivid colours) are in the random pool from level 1. You go round a bank, or over its low
-> corals. The level-up wall across the tank was tried and **removed**: difficulty is only spawns
-> coming faster each level and the speed ramp. Nothing spawns behind an obstacle.
+> **Coral banks (replacing step 3's obstacles).** A few permanent coral banks (`tank/CoralBanks.ts`,
+> 6 placed from a fixed seed in the ring between the mound and the glass, clear of the start) are
+> laid out once and never spawn or despawn: rows of big static corals on low stones — branching
+> bushes, tree corals, sea fans and ruffled lettuce coral (`tank/corals.ts`, one shared geometry per
+> species), ~44 corals in 9 instanced draws for the whole tank. Each coral blocks from the sand up
+> to its own height, so you go round a bank or over its low corals; they push the fish out even
+> while it's blinking (lifting it if it only grazed a top) and cost a life (`FishGame.bumpCoral`).
+> Hazards never spawn on coral. The level-up wall and the big rock stacks were tried and removed.
+> **Difficulty is only enemy frequency** (spawn interval shrinks each level) **and fish speed** (ramps
+> with distance); the hazard pool is rock, jellyfish, blue fish, pufferfish and eel.
 > Next: phone tilt (step 4).
 > Sections 2, 3, 8 and 9 below still describe the pre-refactor game. That version is saved as
 > branch `_version/alpha` and tag `alpha`.

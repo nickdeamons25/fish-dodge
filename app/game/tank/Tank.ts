@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { COLORS, TANK } from '../constants'
 import { excludeFromDepth } from '../engine/RenderPipeline'
 import { rockGeos, rockMat } from '../hazards/registry'
+import { CoralBanks } from './CoralBanks'
 import { buildReef } from './Reef'
 import { Seaweed } from './Seaweed'
 import type { TankPoint } from './space'
@@ -22,13 +23,16 @@ const BUBBLE_RANGE = 1400
  * The aquarium: a giant round glass tank, standing still while the fish swims
  * round it. Sand with rippling light, a painted reef on the inside of the
  * glass, a surface overhead, reef patches and seaweed meadows over the sand,
- * a reef mound in the middle, and sun shafts and drifting specks in the water.
+ * a reef mound in the middle, a few big coral banks to steer round (see
+ * CoralBanks.ts), and sun shafts and drifting specks in the water.
  */
 export class Tank {
   readonly group = new THREE.Group()
   private caustics: THREE.Texture
   private seaweed = new Seaweed()
   private water = new Water()
+  /** Permanent coral banks: solid, so the game asks them about collisions too. */
+  readonly corals = new CoralBanks()
   private bubbles: THREE.Points
   private bubbleRise: Float32Array
   private time = 0
@@ -119,7 +123,7 @@ export class Tank {
     this.group.add(this.seaweed.mesh)
 
     // ---- Reef patches over the sand, and the water's light and particles --------
-    this.group.add(buildReef(), this.water.group)
+    this.group.add(buildReef(), this.corals.group, this.water.group)
 
     // ---- Bubbles, drifting up around the fish -----------------------------------
     const pos = new Float32Array(BUBBLES * 3)
