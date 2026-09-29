@@ -3,13 +3,8 @@ import { useGameStore } from '~/stores/game'
 
 const store = useGameStore()
 
-/** One banner at a time: a level-up wall beats the glass. */
-const warning = computed(() => {
-  if (store.status !== 'playing') return null
-  if (store.run.alert) return store.run.alert
-  if (store.run.glassAhead) return { title: 'Glass ahead!', hint: 'Turn ← →' }
-  return null
-})
+const warning = computed(() =>
+  store.status === 'playing' && store.run.glassAhead ? { title: 'Glass ahead!', hint: 'Turn ← →' } : null)
 </script>
 
 <template>

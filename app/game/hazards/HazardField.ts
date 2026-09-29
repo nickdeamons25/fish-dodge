@@ -2,8 +2,8 @@ import * as THREE from 'three'
 import { SPAWN, TANK } from '../constants'
 import { createShadow, placeShadow } from '../tank/shadow'
 import { forward, headingOf, right, toWorld, wrapAngle, type TankPoint } from '../tank/space'
-import { buildObstacle, contact, near, type SolidPart } from './obstacles'
-import { HAZARDS, RISE_SOLID, rockGeos, type Hazard, type HazardContext, type HazardDef } from './registry'
+import { contact, near } from './obstacles'
+import { HAZARDS, type Hazard, type HazardContext, type HazardDef } from './registry'
 
 /** Seconds for a cleared hazard to shrink away. */
 const VANISH = 0.3
@@ -11,34 +11,12 @@ const VANISH = 0.3
 const CAMERA_BACK = 330
 /** Homing swimmers stop turning once the fish is this close ahead, and commit to their line. */
 const HOMING_COMMIT = 300
-/** Seconds for an obstacle to rise out of the sand, and to sink back. */
-const RISE_SECONDS = 1.2
-const SINK_SECONDS = 1.6
-
 /**
- * The wall that goes up across the tank at each level-up (see `spawnGate`).
- * It stands for `lifetime` seconds, then sinks. The gap, when there is one,
- * is off to one side, so you have to swing out to it.
+ * What the fish hit when it met a solid obstacle, and how to push it back
+ * out: along a world direction across the floor, or straight up if it only
+ * grazed the top.
  */
-export const GATE = {
-  /** Tried nearest-first from the far end: as far ahead as fits in the tank. */
-  distances: [1500, 1300, 1100, 900],
-  thickness: 40,
-  gap: 380,
-  gapOffset: [650, 1050] as [number, number],
-  lifetime: 14,
-  /** Keep the wall's middle, and the gap, this far inside the glass. */
-  glassClearance: 260,
-  /** Clear water around a new wall: other hazards in it shrink away. */
-  clearance: 90,
-}
-
-export type GateKind = 'gap-left' | 'gap-right' | 'closed'
-
-/** What the fish hit when it met a solid obstacle, with the world direction to push it out along. */
-export interface SolidHit { hazard: Hazard, nx: number, nz: number, depth: number }
-
-const smoothstep = (x: number) => THREE.MathUtils.smoothstep(x, 0, 1)
+export interface SolidHit { hazard: Hazard, nx: number, nz: number, up: boolean, depth: number }
 
 interface Live extends Hazard {
   /** Turned to the hazard's heading and placed in the tank; holds the def's mesh. */
@@ -76,11 +54,6 @@ export class HazardField {
     this.untilNext = 0.6
   }
 
-  /** Hold off random spawns for a while (after a level-up wall goes up, so it reads clearly). */
-  pause(seconds: number) {
-    this.untilNext = Math.max(this.untilNext, seconds)
-  }
-
   update(dt: number, time: number, ctx: HazardContext, spawning: boolean) {
     this.clock += dt
     if (spawning) {
@@ -105,7 +78,6 @@ export class HazardField {
       h.pos.z += fwd.z * v * dt
       h.def.update?.(h, dt, time, ctx)
       if (h.vanishing !== undefined) h.vanishing -= dt
-      if (h.rise !== undefined) this.riseOrSink(h, dt)
     }
 
     // Behind the camera means out of sight. Measured along the camera's own
@@ -117,21 +89,10 @@ export class HazardField {
       const reach = Math.max(h.half.a, h.half.z)
       const behind = dx * fwd.x + dz * fwd.z < -(CAMERA_BACK + SPAWN.despawnBehind + reach)
       const far = Math.hypot(dx, dz) > SPAWN.despawnFar + (h.solid ? reach : 0)
-      // Temporary walls leave by sinking (riseOrSink), wherever the fish is.
-      const timed = h.lifetime !== undefined
-      const gone = (!timed && (behind || far))
-        || (h.vanishing !== undefined && h.vanishing <= 0)
-        || (timed && h.lifetime! <= 0 && h.rise! <= 0)
+      const gone = behind || far || (h.vanishing !== undefined && h.vanishing <= 0)
       if (gone) this.remove(h)
       return !gone
     })
-  }
-
-  /** Obstacles rise from the sand when they appear; temporary ones sink back when their time's up. */
-  private riseOrSink(h: Live, dt: number) {
-    if (h.lifetime !== undefined) h.lifetime -= dt
-    if (h.lifetime !== undefined && h.lifetime <= 0) h.rise = Math.max(0, h.rise! - dt / SINK_SECONDS)
-    else h.rise = Math.min(1, h.rise! + dt / RISE_SECONDS)
   }
 
   render(time: number) {
@@ -140,9 +101,8 @@ export class HazardField {
       h.frame.rotation.y = h.heading
       h.def.animate?.(h, time)
       const k = h.vanishing !== undefined ? Math.max(0.001, h.vanishing / VANISH) : 1
-      // Obstacles grow up out of the sand (their mesh stands on y = 0).
-      h.frame.scale.set(k, k * (h.rise === undefined ? 1 : Math.max(0.001, smoothstep(h.rise))), k)
-      if (h.solid) continue // walls and stacks meet the sand; no blob shadow
+      h.frame.scale.setScalar(k)
+      if (h.solid) continue // rocks and coral meet the sand; no blob shadow
       // Hitboxes can change size (pufferfish, eels), so the shadow follows.
       h.shadow.userData.radius = Math.max(h.half.a, h.half.z) * 1.1
       placeShadow(h.shadow, h.pos, h.heading)
@@ -169,84 +129,23 @@ export class HazardField {
     })
   }
 
-  /**
-   * The deepest solid obstacle the fish's box is in, and which way (in the
-   * tank) to push it back out. Obstacles still low in the sand don't count.
-   */
-  solidContact(pos: TankPoint, half: { a: number, z: number }, heading: number): SolidHit | undefined {
+  /** The deepest solid obstacle the fish's box is in, and which way to push it back out. */
+  solidContact(pos: TankPoint, half: { a: number, y: number, z: number }, heading: number): SolidHit | undefined {
     let best: SolidHit | undefined
     for (const h of this.live) {
-      if (!h.solid || h.vanishing !== undefined || (h.rise ?? 1) < RISE_SOLID) continue
+      if (!h.solid || h.vanishing !== undefined) continue
       const { la, lz } = toLocal(h, pos.x, pos.z)
       const c = Math.abs(Math.cos(heading - h.heading))
       const s = Math.abs(Math.sin(heading - h.heading))
-      const hit = contact(h.solid, la, lz, c * half.a + s * half.z, s * half.a + c * half.z)
+      const hit = contact(h.solid, la, lz, c * half.a + s * half.z, s * half.a + c * half.z, pos.y - half.y)
       if (!hit || (best && hit.depth <= best.depth)) continue
       forward(h.heading, fwd)
       right(h.heading, side)
-      best = { hazard: h, nx: fwd.x * hit.na + side.x * hit.nz, nz: fwd.z * hit.na + side.z * hit.nz, depth: hit.depth }
+      best = { hazard: h, nx: fwd.x * hit.na + side.x * hit.nz, nz: fwd.z * hit.na + side.z * hit.nz, up: hit.up, depth: hit.depth }
     }
     return best
   }
 
-  /**
-   * Put up the level-up wall: straight across the tank, glass to glass, as far
-   * ahead in view as fits, with a gap off to one side or none at all. Clears
-   * any hazards in its way. Returns false if there's no room yet (say, the fish
-   * is heading for the glass).
-   */
-  spawnGate(ctx: HazardContext, kind: GateKind) {
-    const bearing = ctx.viewYaw
-    forward(bearing, fwd)
-    right(bearing, side)
-    for (const d of GATE.distances) {
-      const cx = ctx.fish.x + fwd.x * d
-      const cz = ctx.fish.z + fwd.z * d
-      if (Math.hypot(cx, cz) > TANK.radius - GATE.glassClearance) continue
-      // The chord through (cx, cz) across the fish's way: |c + side·t| = R.
-      const cs = cx * side.x + cz * side.z
-      const disc = cs * cs - (cx * cx + cz * cz - TANK.radius * TANK.radius)
-      const t0 = -cs - Math.sqrt(disc) - 60 // a little way into the glass at both ends
-      const t1 = -cs + Math.sqrt(disc) + 60
-      let parts: SolidPart[]
-      if (kind === 'closed') {
-        parts = [{ kind: 'box', a: 0, z: (t0 + t1) / 2, ha: GATE.thickness, hz: (t1 - t0) / 2 }]
-      }
-      else {
-        const off = (GATE.gapOffset[0] + ctx.rand() * (GATE.gapOffset[1] - GATE.gapOffset[0])) * (kind === 'gap-right' ? 1 : -1)
-        // The gap must be inside the glass, or it isn't a way through.
-        const g = THREE.MathUtils.clamp(off, t0 + GATE.glassClearance, t1 - GATE.glassClearance)
-        if (Math.sign(g) !== Math.sign(off)) continue
-        const w = GATE.gap / 2
-        parts = [
-          { kind: 'box', a: 0, z: (t0 + g - w) / 2, ha: GATE.thickness, hz: (g - w - t0) / 2 },
-          { kind: 'box', a: 0, z: (g + w + t1) / 2, ha: GATE.thickness, hz: (t1 - g - w) / 2 },
-        ]
-      }
-      const h = this.makeLive(GATE_DEF, ctx)
-      h.pos.x = cx
-      h.pos.z = cz
-      h.heading = wrapAngle(bearing)
-      h.half = { a: GATE.thickness, y: TANK.height / 2, z: Math.max(-t0, t1) }
-      h.solid = parts
-      h.rise = 0
-      h.lifetime = GATE.lifetime
-      h.data.seed = Math.floor(ctx.rand() * 1e6)
-      this.add(h)
-      this.clearAround(h)
-      return true
-    }
-    return false
-  }
-
-  /** Shrink away every other hazard standing in (or right by) a new obstacle. */
-  private clearAround(obstacle: Live) {
-    for (const o of this.live) {
-      if (o === obstacle || o.vanishing !== undefined) continue
-      const { la, lz } = toLocal(obstacle, o.pos.x, o.pos.z)
-      if (near(obstacle.solid!, la, lz, Math.max(o.half.a, o.half.z) + GATE.clearance)) o.vanishing = VANISH
-    }
-  }
 
   /**
    * Turn a swimmer toward the fish, a little at a time. Only while the fish is
@@ -265,7 +164,14 @@ export class HazardField {
   private remove(h: Live) {
     this.group.remove(h.frame, h.shadow)
     ;(h.shadow.material as THREE.Material).dispose() // each shadow owns its material for per-hazard opacity
-    if (h.solid) (h.mesh as THREE.Mesh).geometry?.dispose() // obstacle meshes are built per instance
+    // Obstacle meshes are built per instance: rock stacks merge their own
+    // geometry, coral banks share each species' and only own their instances.
+    if (h.solid) {
+      h.mesh.traverse((o) => {
+        if ((o as THREE.InstancedMesh).isInstancedMesh) (o as THREE.InstancedMesh).dispose()
+        else if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).geometry.dispose()
+      })
+    }
   }
 
   /** Spawn a specific hazard now, ignoring level and cooldown rules (dev/testing). */
@@ -297,7 +203,6 @@ export class HazardField {
     if (!this.findSpot(h, reach, ctx)) return false
     this.lastSpawn.set(def.id, this.clock)
     this.add(h)
-    if (h.solid) this.clearAround(h)
     return true
   }
 
@@ -403,16 +308,6 @@ function toLocal(h: Hazard, x: number, z: number) {
 }
 const tmpF = new THREE.Vector3()
 const tmpS = new THREE.Vector3()
-
-/** The level-up wall isn't in the random pool; it's put up by `spawnGate`. */
-const GATE_DEF: HazardDef = {
-  id: 'gate',
-  minLevel: Infinity,
-  weight: 0,
-  speedFactor: 1,
-  setup() {},
-  build: h => buildObstacle(h.solid!, rockGeos, h.data.seed!),
-}
 
 function weightedPick(defs: HazardDef[], rand: () => number) {
   const total = defs.reduce((sum, d) => sum + d.weight, 0)

@@ -4,7 +4,7 @@ import { forward, right, type TankPoint } from '../tank/space'
 import { faceTravel } from './critters'
 import { buildEel, poseEel } from './eel'
 import { animateJelly, buildJelly } from './jellyfish'
-import { buildObstacle, type SolidPart } from './obstacles'
+import { buildCoralBank, buildRockStack, layoutCoralBank, type SolidPart } from './obstacles'
 import { PUFFER_GROWTH, animateBlueFish, buildBlueFish, buildPuffer, posePuffer } from './swimmers'
 
 export interface HazardContext {
@@ -36,21 +36,12 @@ export interface Hazard {
   data: Record<string, number>
   mesh: THREE.Object3D
   /**
-   * Solid obstacles (big rocks, reef walls) have a shape instead of just a
+   * Solid obstacles (big rocks, coral banks) have a shape instead of just a
    * hitbox: they push the fish out rather than letting it through (see
    * obstacles.ts). `half` still bounds them, for spacing and despawning.
    */
   solid?: SolidPart[]
-  /**
-   * Obstacles rise out of the sand when they appear, and temporary ones sink
-   * back after `lifetime` seconds. 0..1; only solid above RISE_SOLID.
-   */
-  rise?: number
-  lifetime?: number
 }
-
-/** A rising or sinking obstacle only blocks once it's at least this far up. */
-export const RISE_SOLID = 0.5
 
 /**
  * One kind of hazard. To add a new one, write a definition and push it onto
@@ -321,26 +312,34 @@ const bigRock: HazardDef = {
     h.half = { a: r, y: H / 2, z: r }
     h.solid = [{ kind: 'circle', a: 0, z: 0, r }]
     h.data.seed = Math.floor(rand() * 1e6)
-    h.rise = 1
   },
-  build: h => buildObstacle(h.solid!, rockGeos, h.data.seed!),
+  build: h => buildRockStack(h.solid![0] as Extract<SolidPart, { kind: 'circle' }>, rockGeos, h.data.seed!),
 }
 
-/** A stretch of reef wall across your path that rises from the sand as you approach; go round an end. */
-const reefWall: HazardDef = {
-  id: 'reef-wall',
-  minLevel: 2,
+/** Coral laid out per bank at setup, kept for build. */
+const bankCorals = new WeakMap<Hazard, ReturnType<typeof layoutCoralBank>['corals']>()
+
+/**
+ * A coral bank across your path: a row of big corals on a rocky ridge. Go
+ * round an end, or over the low stretches.
+ */
+const coralBank: HazardDef = {
+  id: 'coral-bank',
+  minLevel: 1,
   weight: 0.6,
   speedFactor: 1,
-  cooldown: 10,
+  cooldown: 8,
   setup(h, { rand }) {
-    const half = range(rand, 300, 500)
-    h.half = { a: 40, y: H / 2, z: half }
-    h.solid = [{ kind: 'box', a: 0, z: 0, ha: 40, hz: half }]
+    const half = range(rand, 250, 450)
+    const { corals, parts } = layoutCoralBank(half, rand)
+    const reach = Math.max(...corals.map(c => c.width / 2))
+    h.half = { a: reach, y: H / 2, z: half + reach }
+    h.solid = parts
+    h.data.half = half
     h.data.seed = Math.floor(rand() * 1e6)
-    h.rise = 0
+    bankCorals.set(h, corals)
   },
-  build: h => buildObstacle(h.solid!, rockGeos, h.data.seed!),
+  build: h => buildCoralBank(bankCorals.get(h)!, h.data.half!, rockGeos, h.data.seed!),
 }
 
-export const HAZARDS: HazardDef[] = [rock, jellyfish, blueFish, puffer, eel, bigRock, reefWall]
+export const HAZARDS: HazardDef[] = [rock, jellyfish, blueFish, puffer, eel, bigRock, coralBank]
