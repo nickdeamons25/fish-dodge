@@ -16,7 +16,7 @@ function play() {
       <!-- Menu -->
       <div v-if="store.status === 'menu'" class="card">
         <h1>Fish Dodge</h1>
-        <p class="sub">Swim far. Don't get hooked.</p>
+        <p class="sub">Swim far. Mind the glass.</p>
         <label class="name">
           <span>Your fish</span>
           <input v-model="nameDraft" maxlength="16" @keydown.enter="play">
@@ -25,7 +25,7 @@ function play() {
         <p v-if="store.profile.highScore" class="meta">
           Best: <strong>{{ store.profile.highScore }}</strong> · Runs: {{ store.profile.totalRuns }}
         </p>
-        <p class="controls">Arrows / WASD to swim · hold mouse or touch to steer · P to pause</p>
+        <p class="controls">← → turn · ↑ ↓ up and down · hold mouse or touch to steer · P to pause</p>
       </div>
 
       <!-- Paused -->

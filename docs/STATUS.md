@@ -5,9 +5,21 @@ _Last updated: 2026-09-25_
 > **Refactor in progress (branch `refactor/rear-tunnel`, 2026-09-29):** the game is
 > being rebuilt as rear view only, with roll-around-a-tunnel steering, phone tilt,
 > and open-ocean scenery. **Step 1 is done:** the four views, tank turns, `flow`, the
-> turn warning (`TurnWarning.vue`, `FishArrow.vue`) and the T/1–4 dev keys are gone,
-> and the game runs in the old rear view. Sections 2, 3 and 9 below still describe
-> the pre-refactor game. That version is saved as branch `_version/alpha` and tag `alpha`.
+> turn warning (`TurnWarning.vue`, `FishArrow.vue`) and the T/1–4 dev keys are gone.
+> A roll-round-a-tunnel version was tried and rejected (it broke the grounded feel); it's
+> parked on the local branch `experiment/tunnel-roll`.
+> **New step 1 is done: turning in circles in a giant round aquarium.** The tank is round
+> (`TANK.radius` 3000, `tank/Tank.ts`): sand with light ripples, the reef painted inside the
+> glass, surface, rims, seaweed meadows plus kelp round the glass and a reef mound in the
+> middle. The fish always swims forward along its `heading` at the game's speed; ←→ turn
+> (no limit), ↑↓ climb/dive, and it banks into turns. The level chase camera eases its yaw
+> after the fish (`engine/CameraRig.ts`) and pulls in rather than leave the glass. The glass
+> and the mound bump you back (mirroring your heading) and cost a life; a "Glass ahead!"
+> banner shows 1.6 s before you'd hit it. Hazards spawn ahead of the fish within the tank and
+> live in their own frame, turned to the heading they spawned with. **Fishing hooks are gone.**
+> Next: proper spawning (step 2), walls/big rocks that force turns (step 3), phone tilt (step 4).
+> Sections 2, 3, 8 and 9 below still describe the pre-refactor game. That version is saved as
+> branch `_version/alpha` and tag `alpha`.
 
 A 3D side-scrolling dodge game: you steer a clownfish through a moving aquarium
 while hazards swim, drift and drop at you. At each new level the tank "turns" to

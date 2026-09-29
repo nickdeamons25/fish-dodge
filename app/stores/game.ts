@@ -17,13 +17,15 @@ export interface RunState {
   level: number
   lives: number
   speed: number
+  /** The fish will reach the glass soon on its current heading. */
+  glassAhead: boolean
 }
 
 const PROFILE_KEY = 'fish-dodge:profile'
 const MAX_LIVES = 3
 
 function freshRun(): RunState {
-  return { score: 0, distance: 0, level: 1, lives: MAX_LIVES, speed: 0 }
+  return { score: 0, distance: 0, level: 1, lives: MAX_LIVES, speed: 0, glassAhead: false }
 }
 
 function loadProfile(): PlayerProfile {

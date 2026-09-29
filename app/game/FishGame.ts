@@ -1,14 +1,13 @@
-import type * as THREE from 'three'
+import * as THREE from 'three'
 import type { GameStatus, GameStore } from '~/stores/game'
-import { METRES_PER_LEVEL, PX_PER_METRE, SPEED, STORE_SYNC_MS } from './constants'
+import { FISH, METRES_PER_LEVEL, PX_PER_METRE, SPEED, STORE_SYNC_MS, TANK } from './constants'
 import type { CameraRig } from './engine/CameraRig'
 import type { Input } from './engine/Input'
 import { Fish } from './entities/Fish'
 import { HazardField } from './hazards/HazardField'
 import type { Hazard } from './hazards/registry'
 import type { Tank } from './tank/Tank'
-import { toWorld } from './tank/space'
-import { REAR } from './tank/views'
+import { forward, fromCentre, headingOf, toWorld } from './tank/space'
 
 /** Depth-of-field strength: light, so hazards at other depths stay readable. */
 const DOF_STRENGTH = 0.2
@@ -26,8 +25,10 @@ export interface GameDeps {
 }
 
 /**
- * Gameplay: runs, scoring and hits, seen from the chase camera. Always
- * ticking — on the menu it plays an "attract mode" (slow scroll, no hazards).
+ * Gameplay: runs, scoring and hits, seen from the chase camera. The fish
+ * swims round a giant round tank; the glass and the mound in the middle bump
+ * it back and cost a life. Always ticking — on the menu it plays an "attract
+ * mode" (a slow lazy circle, no hazards).
  */
 export class FishGame {
   private fish: Fish
@@ -39,6 +40,8 @@ export class FishGame {
   private level = 1
   private sinceSync = 0
   private time = 0
+  private glassAhead = false
+  private readonly fwd = new THREE.Vector3()
 
   constructor(private d: GameDeps) {
     this.fish = new Fish(d.scene)
@@ -76,9 +79,9 @@ export class FishGame {
   }
 
   private resetWorld() {
-    this.d.rig.snap(REAR.camera)
     this.field.clear()
     this.fish.respawn()
+    this.d.rig.snap(this.fish.pos, this.fish.heading)
   }
 
   // ---------------------------------------------------------------------------
@@ -87,7 +90,7 @@ export class FishGame {
   frame(dt: number) {
     const { store, rig } = this.d
     if (store.status !== 'paused') this.update(dt)
-    rig.update(store.status === 'paused' ? 0 : dt)
+    rig.update(store.status === 'paused' ? 0 : dt, this.fish.pos, this.fish.heading)
     this.fish.render(this.time)
     this.field.render(this.time)
   }
@@ -105,7 +108,7 @@ export class FishGame {
       this.sinceSync += dt * 1000
       if (this.sinceSync >= STORE_SYNC_MS) {
         this.sinceSync = 0
-        store.syncRun({ distance: metres, score: Math.floor(metres), level: this.level, speed: Math.round(this.speed) })
+        store.syncRun({ distance: metres, score: Math.floor(metres), level: this.level, speed: Math.round(this.speed), glassAhead: this.glassAhead })
       }
     }
     else if (store.status === 'gameover') {
@@ -115,22 +118,78 @@ export class FishGame {
       this.speed = SPEED.idle
     }
 
-    this.d.tank.update(dt, this.speed)
-    this.fish.update(dt, this.time, REAR, this.d.input, this.d.camera, this.d.canvas)
-    this.field.update(dt, this.time, this.hazardContext(), REAR, this.running)
+    this.fish.update(dt, this.time, this.speed, this.d.input, this.d.camera, this.d.canvas)
+    this.d.tank.update(dt, this.fish.pos, this.d.rig.yaw)
+    this.bumpGlass()
+    this.bumpMound()
+    this.glassAhead = this.running && this.secondsToGlass() < FISH.glassWarnSeconds
+    this.field.update(dt, this.time, this.hazardContext(), this.running)
 
     if (this.running && !this.fish.isInvulnerable) {
-      const hit = this.field.hitTest(this.fish.pos, this.fish.half)
+      const hit = this.field.hitTest(this.fish.pos, this.fish.half, this.fish.heading)
       if (hit) this.onHit(hit)
     }
   }
 
-  private onHit(_hazard: Hazard) {
+  /** Seconds until the fish reaches the glass on its current heading. */
+  private secondsToGlass() {
+    const p = this.fish.pos
+    const f = forward(this.fish.heading, this.fwd)
+    const limit = TANK.radius - TANK.glassMargin
+    // |p + t·f| = limit, forward root.
+    const pf = p.x * f.x + p.z * f.z
+    const t = -pf + Math.sqrt(Math.max(0, pf * pf - (p.x * p.x + p.z * p.z - limit * limit)))
+    return t / Math.max(1, this.speed)
+  }
+
+  /**
+   * Keep the fish inside a circle of `limit` round the centre (or outside it,
+   * for the mound): if it's crossed, put it back on the line and turn its
+   * heading to glance off. Returns the push-back direction if it bumped.
+   */
+  private bounce(limit: number, inside: boolean) {
+    const p = this.fish.pos
+    const r = fromCentre(p)
+    if (inside ? r <= limit : r >= limit) return undefined
+    // Outward normal from the centre; "back" is the way the fish gets pushed.
+    const nx = p.x / Math.max(1e-6, r)
+    const nz = p.z / Math.max(1e-6, r)
+    p.x = nx * limit
+    p.z = nz * limit
+    const back = inside ? { x: -nx, z: -nz } : { x: nx, z: nz }
+    const f = forward(this.fish.heading, this.fwd)
+    const into = -(f.x * back.x + f.z * back.z)
+    if (into > 0) {
+      // Mirror the heading off the surface, like a ball off a cushion.
+      this.fish.heading = headingOf(f.x + 2 * into * back.x, f.z + 2 * into * back.z)
+      this.fish.turnRate = 0
+    }
+    return back
+  }
+
+  private bumpGlass() {
+    const back = this.bounce(TANK.radius - TANK.glassMargin, true)
+    if (back) this.onBump(back)
+  }
+
+  private bumpMound() {
+    if (!this.d.tank.hitsMound(this.fish.pos, this.fish.half)) return
+    const back = this.bounce(TANK.mound.radius * 0.85 + this.fish.half.a, false)
+    if (back) this.onBump(back)
+  }
+
+  /** Swam into the glass or the mound: it hurts like a hazard, unless still blinking from the last hit. */
+  private onBump(back: { x: number, z: number }) {
+    if (this.running && !this.fish.isInvulnerable) this.onHit(undefined, back)
+    else this.d.rig.shake(0.15, 4)
+  }
+
+  private onHit(_hazard?: Hazard, back?: { x: number, z: number }) {
     this.d.rig.shake(0.3, 10)
     this.d.flash()
 
     const livesLeft = this.d.store.loseLife()
-    if (livesLeft > 0) this.fish.hit()
+    if (livesLeft > 0) this.fish.hit(back)
     // At 0 lives the store flips to 'gameover' and onStatus handles the rest;
     // stop immediately rather than waiting for Vue's watcher to flush.
     else this.running = false
@@ -138,11 +197,11 @@ export class FishGame {
 
   /** Dev only: spawn a hazard by id (e.g. 'eel') regardless of rarity. */
   spawn(id: string) {
-    return this.field.spawnById(id, this.hazardContext(), REAR)
+    return this.field.spawnById(id, this.hazardContext())
   }
 
   private hazardContext() {
-    return { speed: this.speed, level: this.level, rand: Math.random, fish: this.fish.pos }
+    return { speed: this.speed, level: this.level, rand: Math.random, fish: this.fish.pos, heading: this.fish.heading }
   }
 
   /** Depth-of-field target: focus on the fish. */

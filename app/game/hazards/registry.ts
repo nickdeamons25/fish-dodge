@@ -1,26 +1,32 @@
 import * as THREE from 'three'
 import { TANK } from '../constants'
-import type { TankPoint } from '../tank/space'
+import { forward, right, type TankPoint } from '../tank/space'
 import { faceTravel } from './critters'
 import { buildEel, poseEel } from './eel'
 import { animateJelly, buildJelly } from './jellyfish'
 import { PUFFER_GROWTH, animateBlueFish, buildBlueFish, buildPuffer, posePuffer } from './swimmers'
 
 export interface HazardContext {
-  /** Current world scroll speed, units/s. */
+  /** How fast the fish is swimming, units/s. */
   speed: number
   level: number
   rand: () => number
-  /** Where the player is, for hazards that react to them. */
+  /** Where the player is and which way it's heading, for hazards that react to them. */
   fish: TankPoint
+  heading: number
 }
 
-/** A live hazard. Position and hitbox are in tank space. */
+/**
+ * A live hazard. Position is in tank space. Each hazard has its own frame,
+ * turned to `heading` (the way the fish was swimming when it spawned): local +X
+ * runs away from the fish, local -X back toward it, +Z to the fish's right.
+ */
 export interface Hazard {
   def: HazardDef
   pos: TankPoint
-  /** Hitbox half-extents in tank units. */
-  half: TankPoint
+  heading: number
+  /** Hitbox half-extents in the hazard's frame: along its heading (a), height (y), across (z). */
+  half: { a: number, y: number, z: number }
   /** Free-form per-instance state for behaviours. */
   data: Record<string, number>
   mesh: THREE.Object3D
@@ -29,33 +35,38 @@ export interface Hazard {
 /**
  * One kind of hazard. To add a new one, write a definition and push it onto
  * HAZARDS — the field picks from whatever is unlocked at the current level.
- * The mesh's origin should sit at the hitbox centre.
+ * Build the mesh in the hazard's frame (see Hazard), origin at the hitbox
+ * centre; the field turns and places it.
  */
 export interface HazardDef {
   id: string
   minLevel: number
   /** Relative spawn chance among unlocked hazards. */
   weight: number
-  /** Multiplier on world scroll speed (1 = drifts with the current, >1 swims at you). */
+  /**
+   * Speed relative to the fish's, as if everything drifted toward it: 1 =
+   * stays put while the fish swims up to it, >1 swims at you, <1 swims the
+   * same way (and the fish overtakes it).
+   */
   speedFactor: number
   /** Minimum seconds between two spawns of this hazard, for rare ones. */
   cooldown?: number
-  /** Place the hazard across the tank and size its hitbox. `pos.a` is already set. */
+  /** Size the hitbox and set height and behaviour. `pos.x`/`pos.z` and `heading` are already set. */
   setup: (h: Hazard, ctx: HazardContext) => void
   /** Build the 3D object once `setup` has sized the hitbox. */
   build: (h: Hazard) => THREE.Object3D
-  /** Optional per-frame behaviour on top of drifting down the current. */
+  /** Optional per-frame behaviour on top of its drift (see `speedFactor`). */
   update?: (h: Hazard, dt: number, time: number, ctx: HazardContext) => void
   /** Optional per-frame visual animation (mesh already positioned). */
   animate?: (h: Hazard, time: number) => void
 }
 
 const range = (r: () => number, min: number, max: number) => min + r() * (max - min)
-const randomZ = (h: Hazard, r: () => number) => range(r, h.half.z, TANK.depth - h.half.z)
+const H = TANK.height
 
 // ---- Shared geometry & materials --------------------------------------------
-const rockMat = new THREE.MeshStandardMaterial({ color: 0x6b7484, roughness: 0.95, flatShading: true })
-const rockGeos = Array.from({ length: 5 }, (_, i) => {
+export const rockMat = new THREE.MeshStandardMaterial({ color: 0x6b7484, roughness: 0.95, flatShading: true })
+export const rockGeos = Array.from({ length: 5 }, (_, i) => {
   const g = new THREE.IcosahedronGeometry(1, 1)
   const p = g.getAttribute('position') as THREE.BufferAttribute
   // Jitter each shared vertex consistently so faces stay closed.
@@ -70,11 +81,8 @@ const rockGeos = Array.from({ length: 5 }, (_, i) => {
   return g
 })
 
-const steelMat = new THREE.MeshStandardMaterial({ color: 0xc8d0d8, metalness: 0.8, roughness: 0.25 })
-const beadMat = new THREE.MeshStandardMaterial({ color: 0xff4d4d, roughness: 0.3 })
-const lineMat = new THREE.MeshBasicMaterial({ color: 0xe8eef5, transparent: true, opacity: 0.6 })
-const lineGeo = new THREE.CylinderGeometry(0.8, 0.8, 1, 4).translate(0, 0.5, 0)
 
+const tmp = new THREE.Vector3()
 const smooth = (x: number) => { const t = Math.min(1, Math.max(0, x)); return t * t * (3 - 2 * t) }
 
 // ---- Definitions ------------------------------------------------------------
@@ -86,8 +94,7 @@ const rock: HazardDef = {
   setup(h, { rand }) {
     const s = range(rand, 0.8, 1.6)
     h.half = { a: 36 * s, y: 28 * s, z: 36 * s }
-    h.pos.y = TANK.height - h.half.y
-    h.pos.z = randomZ(h, rand)
+    h.pos.y = h.half.y // on the sand
     h.data.geo = Math.floor(rand() * rockGeos.length)
     h.data.spin = rand() * Math.PI * 2
   },
@@ -110,65 +117,26 @@ const jellyfish: HazardDef = {
   speedFactor: 0.8,
   setup(h, { rand }) {
     h.half = { a: 20, y: 22, z: 20 }
-    h.data.baseY = range(rand, 60, TANK.height - 90)
+    h.data.baseY = range(rand, 90, H - 60)
     h.data.amp = range(rand, 40, 90)
-    h.data.baseZ = randomZ(h, rand)
     h.data.zAmp = 30
     h.data.phase = rand() * Math.PI * 2
+    h.data.drift = 0
     h.pos.y = h.data.baseY
-    h.pos.z = h.data.baseZ
   },
   build: () => buildJelly(),
   update(h, _dt, time) {
     const t = time * 1.67 + h.data.phase!
     h.pos.y = h.data.baseY! + Math.sin(t) * h.data.amp!
-    h.pos.z = h.data.baseZ! + Math.cos(t * 0.7) * h.data.zAmp!
+    // Sway side to side across its path.
+    const drift = Math.cos(t * 0.7) * h.data.zAmp!
+    const side = right(h.heading, tmp)
+    h.pos.x += side.x * (drift - h.data.drift!)
+    h.pos.z += side.z * (drift - h.data.drift!)
+    h.data.drift = drift
   },
   animate(h, time) {
     animateJelly(h.mesh, time, h.data.phase!)
-  },
-}
-
-const hook: HazardDef = {
-  id: 'hook',
-  minLevel: 2,
-  weight: 2,
-  speedFactor: 1,
-  setup(h, { rand }) {
-    h.half = { a: 13, y: 18, z: 13 }
-    h.pos.y = -40
-    h.pos.z = randomZ(h, rand)
-    h.data.targetY = range(rand, TANK.height * 0.4, TANK.height - 40)
-    h.data.dropSpeed = range(rand, 160, 260)
-  },
-  build() {
-    const g = new THREE.Group()
-    const hookGroup = new THREE.Group()
-    const shank = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 30, 8), steelMat)
-    shank.position.y = 6
-    const bend = new THREE.Mesh(new THREE.TorusGeometry(8, 2.2, 8, 16, Math.PI * 1.15), steelMat)
-    bend.rotation.z = Math.PI
-    bend.position.set(-8, -9, 0)
-    const bead = new THREE.Mesh(new THREE.SphereGeometry(5, 12, 10), beadMat)
-    bead.position.y = 22
-    hookGroup.add(shank, bend, bead)
-    // Angled so the bend reads from the chase camera.
-    hookGroup.rotation.y = Math.PI / 4
-    g.add(hookGroup)
-
-    const line = new THREE.Mesh(lineGeo, lineMat)
-    line.position.y = 26
-    line.name = 'line'
-    g.add(line)
-    return g
-  },
-  update(h, dt) {
-    if (h.pos.y < h.data.targetY!) h.pos.y = Math.min(h.data.targetY!, h.pos.y + h.data.dropSpeed! * dt)
-  },
-  animate(h) {
-    // The line runs from the bead up past the surface.
-    const line = h.mesh.getObjectByName('line')!
-    line.scale.y = Math.max(1, h.pos.y + 60)
   },
 }
 
@@ -181,10 +149,9 @@ const blueFish: HazardDef = {
     h.data.size = range(rand, 0.9, 1.25)
     const s = h.data.size
     h.half = { a: 26 * s, y: 7 * s, z: 6 * s }
-    h.data.baseY = range(rand, 40, TANK.height - 60)
+    h.data.baseY = range(rand, 60, H - 40)
     h.data.phase = rand() * Math.PI * 2
     h.pos.y = h.data.baseY
-    h.pos.z = randomZ(h, rand)
   },
   build: h => buildBlueFish(h.data.size!),
   update(h, _dt, time) {
@@ -232,19 +199,22 @@ const puffer: HazardDef = {
     h.data.size = range(rand, 0.9, 1.2)
     const s = h.data.size
     h.half = pufferHalf(s, 0)
-    h.data.baseY = range(rand, 50, TANK.height - 60)
+    h.data.baseY = range(rand, 60, H - 50)
     h.data.phase = rand() * Math.PI * 2
     h.pos.y = h.data.baseY
-    h.pos.z = randomZ(h, rand)
   },
   build: h => buildPuffer(h.data.size!),
   update(h, dt, time, ctx) {
     h.pos.y = h.data.baseY! + Math.sin(time * 1.2 + h.data.phase!) * 25
 
     // Puff up when the player swims close, deflate once they're past.
-    const ahead = h.pos.a - ctx.fish.a // > 0 while the fish is still approaching
-    // "Level with you" across both axes you steer: height and across the tank.
-    const level = Math.hypot(h.pos.y - ctx.fish.y, h.pos.z - ctx.fish.z)
+    // Measured in the fish's frame: how far ahead of it, and how far off its path.
+    const fwd = forward(ctx.heading, tmp)
+    const dx = h.pos.x - ctx.fish.x
+    const dz = h.pos.z - ctx.fish.z
+    const ahead = dx * fwd.x + dz * fwd.z // > 0 while the fish is still approaching
+    const across = dx * fwd.z - dz * fwd.x
+    const level = Math.hypot(h.pos.y - ctx.fish.y, across)
     // React at a distance that gives the same warning time at any speed.
     const reach = Math.min(PUFF.maxTriggerDist, Math.max(PUFF.triggerDist, ctx.speed * puffer.speedFactor * PUFF.warnSeconds))
     if (!h.data.puffed && ahead < reach && ahead > -30 && level < PUFF.triggerLevel) h.data.puffed = 1
@@ -278,8 +248,7 @@ const eel: HazardDef = {
   cooldown: 25, // rare: never two within 25 s
   setup(h, { rand }) {
     h.half = { a: 16, y: 14, z: 16 }
-    h.pos.y = TANK.height - h.half.y
-    h.pos.z = randomZ(h, rand)
+    h.pos.y = h.half.y
     h.data.reach = range(rand, 150, 185)
     h.data.phase = rand() * Math.PI * 2
     h.data.ext = 0
@@ -300,14 +269,14 @@ const eel: HazardDef = {
     h.data.ext = k * h.data.reach!
     // Hitbox runs from the seabed up to the head, so it grows as the eel rises.
     h.half.y = (h.data.ext + 28) / 2
-    h.pos.y = TANK.height - h.half.y
+    h.pos.y = h.half.y
   },
   animate(h, time) {
     // The group sits at the hitbox centre; drop the den back onto the seabed.
     const root = h.mesh.getObjectByName('root')!
-    root.position.y = -(TANK.height - h.pos.y)
+    root.position.y = -h.pos.y
     poseEel(root, h.data.ext!, time, h.data.phase!)
   },
 }
 
-export const HAZARDS: HazardDef[] = [rock, jellyfish, hook, blueFish, puffer, eel]
+export const HAZARDS: HazardDef[] = [rock, jellyfish, blueFish, puffer, eel]

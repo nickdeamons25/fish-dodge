@@ -6,7 +6,6 @@ import { Input } from './engine/Input'
 import { RenderPipeline } from './engine/RenderPipeline'
 import { FishGame } from './FishGame'
 import { Tank } from './tank/Tank'
-import { REAR } from './tank/views'
 
 export interface GameHandle {
   onStatus: (status: GameStatus, prev: GameStatus) => void
@@ -26,12 +25,12 @@ export function createGame(parent: HTMLElement, store: GameStore): GameHandle {
   parent.appendChild(canvas)
 
   const scene = new THREE.Scene()
-  scene.background = new THREE.Color(COLORS.room)
+  scene.background = new THREE.Color(COLORS.deepWater)
   const fog = new THREE.Fog(COLORS.deepWater, 2000, 4000)
   scene.fog = fog
 
   const camera = new THREE.PerspectiveCamera(30, 16 / 9, 5, 6000)
-  const rig = new CameraRig(camera, fog, REAR.camera)
+  const rig = new CameraRig(camera, fog)
   const pipeline = new RenderPipeline(renderer, scene, camera)
 
   const resize = () => {

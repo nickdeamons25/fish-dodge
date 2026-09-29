@@ -3,27 +3,37 @@ import { FISH, TANK } from '../constants'
 import type { Input } from '../engine/Input'
 import { excludeFromDepth } from '../engine/RenderPipeline'
 import { createShadow, placeShadow } from '../tank/shadow'
-import { dirToTank, toWorld, type TankPoint } from '../tank/space'
-import type { View } from '../tank/views'
+import { forward, toWorld, wrapAngle, type TankPoint } from '../tank/space'
 import { buildFishModel, type SwimUniforms } from './fishModel'
 
-const HOME: TankPoint = { a: 0, y: TANK.height / 2, z: TANK.depth / 2 }
+/** Start of every run: mid-height, well off-centre, swimming across the tank past the mound. */
+const HOME: TankPoint = { x: 0, y: TANK.height / 2, z: TANK.radius * 0.55 }
+const HOME_HEADING = 0
 
 /** Mouth: a slow "blub blub" — two openings over BLUB_SECONDS, every few seconds. */
 const BLUB_SECONDS = 1.3
 const BLUB_GAP = [3, 7] as const
 const bubbleGeo = new THREE.SphereGeometry(1, 10, 8)
 const clamp = THREE.MathUtils.clamp
+/** How quickly a knockback dies away, units/s². */
+const PUSH_DRAG = 700
 
 /**
- * The player. Simulated in tank space with simple kinematics; the mesh is
- * placed in the 3D tank and the camera does the rest.
+ * The player. Always swimming forward along its heading at the game's speed;
+ * the player turns it (left/right) and moves it up and down. Simulated in
+ * tank space with simple kinematics; the chase camera does the rest.
  */
 export class Fish {
   readonly pos: TankPoint = { ...HOME }
-  readonly vel: TankPoint = { a: 0, y: 0, z: 0 }
+  /** Facing across the floor, radians (see tank/space.ts `forward`). */
+  heading = HOME_HEADING
+  /** Current turn rate, radians/s; + = turning left. */
+  turnRate = 0
+  /** Vertical speed, and a knockback across the floor that dies away. */
+  vy = 0
+  readonly push = { x: 0, z: 0 }
   readonly half = FISH.half
-  /** Placed in the world and turned to face the current's direction. */
+  /** Placed in the world and turned to face the heading. */
   readonly mesh = new THREE.Group()
   /** The model itself; pitches, yaws and rolls locally inside `mesh`. */
   private body: THREE.Group
@@ -43,8 +53,7 @@ export class Fish {
   private now = 0
 
   // Scratch objects, reused every frame.
-  private readonly right = new THREE.Vector3()
-  private readonly up = new THREE.Vector3()
+  private readonly fwd = new THREE.Vector3()
   private readonly screen = new THREE.Vector3()
 
   constructor(scene: THREE.Scene) {
@@ -73,15 +82,21 @@ export class Fish {
 
   respawn() {
     Object.assign(this.pos, HOME)
-    Object.assign(this.vel, { a: 0, y: 0, z: 0 })
+    this.heading = HOME_HEADING
+    this.turnRate = 0
+    this.vy = 0
+    this.push.x = this.push.z = 0
     this.dead = false
     this.invulnerableUntil = 0
     this.body.rotation.set(0, 0, 0)
   }
 
-  hit() {
+  /** Took a hit: blink, and get knocked back (along `dir` across the floor, default straight back). */
+  hit(dir?: { x: number, z: number }) {
     this.invulnerableUntil = this.now + FISH.invulnerableMs / 1000
-    this.vel.a = -220
+    const back = dir ?? { x: -forward(this.heading, this.fwd).x, z: -this.fwd.z }
+    this.push.x = back.x * 220
+    this.push.z = back.z * 220
   }
 
   /** Belly-up float to the surface. */
@@ -90,24 +105,26 @@ export class Fish {
     this.dead = true
   }
 
-  update(dt: number, time: number, view: View, input: Input, camera: THREE.PerspectiveCamera, canvas: HTMLCanvasElement) {
+  /** `speed`: how fast the fish is swimming forward, units/s. */
+  update(dt: number, time: number, speed: number, input: Input, camera: THREE.PerspectiveCamera, canvas: HTMLCanvasElement) {
     this.now = time
+
+    // Steering intent: turn (+ = left) and climb (+ = up), each -1..1.
+    let turn = 0
+    let climb = 0
     if (this.dead) {
-      this.pos.y = Math.max(this.half.y, this.pos.y - 110 * dt)
-      return
+      this.vy = 0
+      this.pos.y = Math.min(TANK.height - this.half.y, this.pos.y + 110 * dt)
     }
+    else if (this.controllable) {
+      if (input.isDown('ArrowUp', 'KeyW')) climb += 1
+      if (input.isDown('ArrowDown', 'KeyS')) climb -= 1
+      if (input.isDown('ArrowLeft', 'KeyA')) turn += 1
+      if (input.isDown('ArrowRight', 'KeyD')) turn -= 1
 
-    // Steering intent in screen space: +x right, +y down.
-    let sx = 0
-    let sy = 0
-    if (this.controllable) {
-      if (input.isDown('ArrowUp', 'KeyW')) sy -= 1
-      if (input.isDown('ArrowDown', 'KeyS')) sy += 1
-      if (input.isDown('ArrowLeft', 'KeyA')) sx -= 1
-      if (input.isDown('ArrowRight', 'KeyD')) sx += 1
-
-      // Touch / mouse: hold to steer toward the pointer.
-      if (input.pointer.isDown && sx === 0 && sy === 0) {
+      // Touch / mouse: hold to steer toward the pointer, relative to where the
+      // fish is on screen: sideways turns, up/down climbs.
+      if (input.pointer.isDown && turn === 0 && climb === 0) {
         toWorld(this.pos, this.screen).project(camera)
         const fx = ((this.screen.x + 1) / 2) * canvas.clientWidth
         const fy = ((1 - this.screen.y) / 2) * canvas.clientHeight
@@ -115,47 +132,43 @@ export class Fish {
         const dy = input.pointer.y - fy
         const dist = Math.hypot(dx, dy)
         if (dist > 8) {
-          sx = dx / dist
-          sy = dy / dist
+          turn = -dx / dist
+          climb = -dy / dist
         }
       }
     }
     else {
-      // Idle bob (menu / not under player control): drive position directly and
-      // ease back home. Pushing acceleration with a sine drifts off over time.
+      // Attract mode (menu): a lazy circle, bobbing about mid-height.
+      turn = 0.25
       const k = 1 - Math.exp(-1.5 * dt)
-      this.pos.a += (HOME.a - this.pos.a) * k
-      this.pos.z += (HOME.z - this.pos.z) * k
       this.pos.y += (HOME.y + Math.sin(time * 2.5) * 14 - this.pos.y) * k
-      this.vel.a = this.vel.y = this.vel.z = 0
-      return
     }
 
-    // Screen direction → world via the live camera basis → tank axes the view allows.
-    // Because this reads the real camera, controls stay screen-relative.
-    const acc = { a: 0, y: 0, z: 0 }
-    const mag = Math.min(1, Math.hypot(sx, sy))
-    if (mag > 0) {
-      this.right.set(1, 0, 0).applyQuaternion(camera.quaternion)
-      this.up.set(0, 1, 0).applyQuaternion(camera.quaternion)
-      const world = this.right.multiplyScalar(sx).addScaledVector(this.up, -sy)
-      const t = dirToTank(world)
-      if (!view.steer.a) t.a = 0
-      if (!view.steer.y) t.y = 0
-      if (!view.steer.z) t.z = 0
-      const len = Math.hypot(t.a, t.y, t.z)
-      if (len > 1e-3) {
-        acc.a = (t.a / len) * mag
-        acc.y = (t.y / len) * mag
-        acc.z = (t.z / len) * mag
+    // Turning eases in and out, so the fish (and the camera after it) swings round smoothly.
+    this.turnRate += (turn * FISH.maxTurn - this.turnRate) * (1 - Math.exp(-FISH.turnResponse * dt))
+    this.heading = wrapAngle(this.heading + this.turnRate * dt)
+
+    if (this.controllable) {
+      if (climb !== 0) this.vy += climb * FISH.accel * dt
+      else this.vy -= Math.sign(this.vy) * Math.min(Math.abs(this.vy), FISH.drag * dt)
+      this.vy = clamp(this.vy, -FISH.maxSpeed, FISH.maxSpeed)
+      this.pos.y += this.vy * dt
+      if (this.pos.y < this.half.y || this.pos.y > TANK.height - this.half.y) {
+        this.pos.y = clamp(this.pos.y, this.half.y, TANK.height - this.half.y)
+        this.vy = 0
       }
     }
-    // When the along-current axis is locked, drift gently back home on it.
-    if (!view.steer.a) acc.a = clamp(-this.pos.a / 60, -1, 1)
 
-    this.integrate('a', acc.a, dt, TANK.fishAMin, TANK.fishAMax)
-    this.integrate('y', acc.y, dt, this.half.y, TANK.height - this.half.y)
-    this.integrate('z', acc.z, dt, this.half.z, TANK.depth - this.half.z)
+    // Always swimming forward, plus whatever knockback is left.
+    forward(this.heading, this.fwd)
+    this.pos.x += (this.fwd.x * speed + this.push.x) * dt
+    this.pos.z += (this.fwd.z * speed + this.push.z) * dt
+    const push = Math.hypot(this.push.x, this.push.z)
+    if (push > 0) {
+      const k = Math.max(0, push - PUSH_DRAG * dt) / push
+      this.push.x *= k
+      this.push.z *= k
+    }
   }
 
   render(time: number) {
@@ -163,7 +176,8 @@ export class Fish {
     this.lastRenderTime = time
     this.animateSwim(dt)
     toWorld(this.pos, this.mesh.position)
-    placeShadow(this.shadow, this.pos)
+    this.mesh.rotation.y = this.heading
+    placeShadow(this.shadow, this.pos, this.heading)
     const m = this.body
 
     if (this.dead) {
@@ -172,21 +186,21 @@ export class Fish {
       return
     }
 
-    // Nose follows velocity: pitch with height, yaw with depth.
-    m.rotation.z = clamp(-this.vel.y * 0.0016, -0.45, 0.45)
-    m.rotation.y = clamp(this.vel.z * 0.0016, -0.5, 0.5)
-    m.rotation.x = clamp(this.vel.z * 0.0008, -0.3, 0.3)
+    // Nose follows the climb; the body yaws a touch and banks into turns.
+    m.rotation.z = clamp(this.vy * 0.0016, -0.45, 0.45)
+    m.rotation.y = clamp(this.turnRate * 0.12, -0.3, 0.3)
+    m.rotation.x = clamp(-this.turnRate * 0.28, -0.55, 0.55)
     this.blub(time)
 
     this.mesh.visible = !(this.isInvulnerable && Math.floor(time * 10) % 2 === 0)
   }
 
   /**
-   * Swimming wave: always cruising against the current, and beating harder and
+   * Swimming wave: always cruising forward, and beating harder and
    * faster the more the player is steering. Winds down to stillness on death.
    */
   private animateSwim(dt: number) {
-    const effort = this.dead ? 0 : Math.min(1, Math.hypot(this.vel.a, this.vel.y, this.vel.z) / FISH.maxSpeed)
+    const effort = this.dead ? 0 : Math.min(1, (Math.abs(this.vy) + Math.abs(this.turnRate) * 140) / FISH.maxSpeed)
     const amp = this.dead ? 0 : 2.4 + effort * 2.6
     const freq = this.dead ? 1.5 : 7 + effort * 6
     this.swim.uSwim.value += (amp - this.swim.uSwim.value) * Math.min(1, dt * 4)
@@ -232,20 +246,5 @@ export class Fish {
     this.mouth.getWorldPosition(b.mesh.position)
     b.age = 0
     b.mesh.visible = true
-  }
-
-  private integrate(axis: keyof TankPoint, input: number, dt: number, min: number, max: number) {
-    let v = this.vel[axis]
-    if (input !== 0) v += input * FISH.accel * dt
-    else v -= Math.sign(v) * Math.min(Math.abs(v), FISH.drag * dt)
-    v = clamp(v, -FISH.maxSpeed, FISH.maxSpeed)
-
-    let p = this.pos[axis] + v * dt
-    if (p < min || p > max) {
-      p = clamp(p, min, max)
-      v = 0
-    }
-    this.pos[axis] = p
-    this.vel[axis] = v
   }
 }

@@ -14,7 +14,14 @@ const store = useGameStore()
       <span class="label">Depth lvl</span>
       <span class="value">{{ store.run.level }}</span>
     </div>
-    <div class="center" />
+    <!-- Warnings sit in the bar's free middle so they never cover the tank. -->
+    <div class="center">
+      <Transition name="warn">
+        <div v-if="store.status === 'playing' && store.run.glassAhead" class="warn" role="status">
+          Glass ahead! <span class="hint">Turn ← →</span>
+        </div>
+      </Transition>
+    </div>
     <div class="lives" :aria-label="`${store.run.lives} lives`">
       <span v-for="i in store.maxLives" :key="i" class="heart" :class="{ lost: i > store.run.lives }">♥</span>
     </div>
@@ -61,6 +68,29 @@ const store = useGameStore()
   display: flex;
   justify-content: center;
 }
+.warn {
+  padding: 6px 14px;
+  border-radius: 10px;
+  background: rgb(255 120 80 / 0.85);
+  color: #fff;
+  font-weight: 700;
+  font-size: 16px;
+  white-space: nowrap;
+  animation: pulse 0.5s ease-in-out infinite alternate;
+}
+.warn .hint {
+  font-weight: 400;
+  opacity: 0.9;
+  margin-left: 6px;
+}
+@keyframes pulse {
+  to { transform: scale(1.05); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .warn { animation: none; }
+}
+.warn-enter-active, .warn-leave-active { transition: opacity 0.2s; }
+.warn-enter-from, .warn-leave-to { opacity: 0; }
 .lives {
   font-size: 26px;
   display: flex;
@@ -80,6 +110,7 @@ const store = useGameStore()
   .stat { padding: 2px 8px; min-width: 0; }
   .label { font-size: 9px; }
   .value { font-size: 15px; }
+  .warn { font-size: 12px; padding: 3px 8px; }
   .lives { font-size: 18px; }
   .pause { width: 30px; height: 30px; }
 }

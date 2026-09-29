@@ -1,18 +1,22 @@
 import * as THREE from 'three'
-import { SPAWN } from '../constants'
+import { SPAWN, TANK } from '../constants'
 import { createShadow, placeShadow } from '../tank/shadow'
-import { toWorld, type TankPoint } from '../tank/space'
-import type { View } from '../tank/views'
+import { forward, fromCentre, right, toWorld, type TankPoint } from '../tank/space'
 import { HAZARDS, type Hazard, type HazardContext, type HazardDef } from './registry'
 
 /** Seconds for a cleared hazard to shrink away. */
 const VANISH = 0.3
 
 interface Live extends Hazard {
+  /** Turned to the hazard's heading and placed in the tank; holds the def's mesh. */
+  frame: THREE.Group
   shadow: THREE.Mesh
   /** Seconds left in a vanish animation, if clearing. */
   vanishing?: number
 }
+
+const fwd = new THREE.Vector3()
+const side = new THREE.Vector3()
 
 /** Spawns, moves, draws and collides every hazard. */
 export class HazardField {
@@ -39,25 +43,34 @@ export class HazardField {
     this.untilNext = 0.6
   }
 
-  update(dt: number, time: number, ctx: HazardContext, view: View, spawning: boolean) {
+  update(dt: number, time: number, ctx: HazardContext, spawning: boolean) {
     this.clock += dt
     if (spawning) {
       this.untilNext -= dt
       if (this.untilNext <= 0) {
-        this.spawn(ctx, view)
+        this.spawn(ctx)
         const interval = Math.max(SPAWN.minInterval, SPAWN.startInterval - (ctx.level - 1) * SPAWN.shrinkPerLevel)
         this.untilNext = interval * (0.75 + ctx.rand() * 0.5)
       }
     }
 
     for (const h of this.live) {
-      h.pos.a -= ctx.speed * h.def.speedFactor * dt
+      // The tank stands still and the fish swims; a hazard's own motion is
+      // whatever its speedFactor adds on top (see HazardDef).
+      const v = (1 - h.def.speedFactor) * ctx.speed
+      forward(h.heading, fwd)
+      h.pos.x += fwd.x * v * dt
+      h.pos.z += fwd.z * v * dt
       h.def.update?.(h, dt, time, ctx)
       if (h.vanishing !== undefined) h.vanishing -= dt
     }
 
+    forward(ctx.heading, fwd)
     this.live = this.live.filter((h) => {
-      const gone = h.pos.a + h.half.a < view.despawnA || (h.vanishing !== undefined && h.vanishing <= 0)
+      const dx = h.pos.x - ctx.fish.x
+      const dz = h.pos.z - ctx.fish.z
+      const behind = dx * fwd.x + dz * fwd.z < -(SPAWN.despawnBehind + h.half.a)
+      const gone = behind || Math.hypot(dx, dz) > SPAWN.despawnFar || (h.vanishing !== undefined && h.vanishing <= 0)
       if (gone) this.remove(h)
       return !gone
     })
@@ -65,37 +78,46 @@ export class HazardField {
 
   render(time: number) {
     for (const h of this.live) {
-      toWorld(h.pos, h.mesh.position)
+      toWorld(h.pos, h.frame.position)
+      h.frame.rotation.y = h.heading
       h.def.animate?.(h, time)
       const k = h.vanishing !== undefined ? Math.max(0.001, h.vanishing / VANISH) : 1
-      h.mesh.scale.setScalar(k)
+      h.frame.scale.setScalar(k)
       // Hitboxes can change size (pufferfish, eels), so the shadow follows.
       h.shadow.userData.radius = Math.max(h.half.a, h.half.z) * 1.1
-      placeShadow(h.shadow, h.pos)
+      placeShadow(h.shadow, h.pos, h.heading)
       h.shadow.scale.multiplyScalar(k)
     }
   }
 
-  /** First hazard overlapping the given box. */
-  hitTest(pos: TankPoint, half: TankPoint): Hazard | undefined {
-    return this.live.find(h =>
-      h.vanishing === undefined
-      && Math.abs(h.pos.a - pos.a) < h.half.a + half.a
-      && Math.abs(h.pos.y - pos.y) < h.half.y + half.y
-      && Math.abs(h.pos.z - pos.z) < h.half.z + half.z,
-    )
+  /**
+   * First hazard overlapping the fish's box, tested in the hazard's frame. The
+   * fish's box is turned into that frame too, as its extent along each axis.
+   */
+  hitTest(pos: TankPoint, half: { a: number, y: number, z: number }, heading: number): Hazard | undefined {
+    return this.live.find((h) => {
+      if (h.vanishing !== undefined) return false
+      forward(h.heading, fwd)
+      right(h.heading, side)
+      const dx = pos.x - h.pos.x
+      const dz = pos.z - h.pos.z
+      const c = Math.abs(Math.cos(heading - h.heading))
+      const s = Math.abs(Math.sin(heading - h.heading))
+      return Math.abs(dx * fwd.x + dz * fwd.z) < h.half.a + c * half.a + s * half.z
+        && Math.abs(pos.y - h.pos.y) < h.half.y + half.y
+        && Math.abs(dx * side.x + dz * side.z) < h.half.z + s * half.a + c * half.z
+    })
   }
 
   private remove(h: Live) {
-    this.group.remove(h.mesh, h.shadow)
+    this.group.remove(h.frame, h.shadow)
     ;(h.shadow.material as THREE.Material).dispose() // each shadow owns its material for per-hazard opacity
   }
 
   /** Spawn a specific hazard now, ignoring level and cooldown rules (dev/testing). */
-  spawnById(id: string, ctx: HazardContext, view: View) {
+  spawnById(id: string, ctx: HazardContext) {
     const def = HAZARDS.find(d => d.id === id)
-    if (def) this.spawn(ctx, view, def)
-    return !!def
+    return !!def && this.spawn(ctx, def)
   }
 
   /** What may spawn right now: unlocked and off cooldown. */
@@ -107,27 +129,43 @@ export class HazardField {
     })
   }
 
-  private spawn(ctx: HazardContext, view: View, forced?: HazardDef) {
+  /** Spawn ahead of the fish, off to one side of its path; false if there's no room there. */
+  private spawn(ctx: HazardContext, forced?: HazardDef) {
     const def = forced ?? weightedPick(this.eligible(ctx), ctx.rand)
-    if (!def) return
-    this.lastSpawn.set(def.id, this.clock)
+    if (!def) return false
 
     const h: Live = {
       def,
-      pos: { a: view.spawnA, y: 0, z: 0 },
+      pos: { x: 0, y: 0, z: 0 },
+      heading: ctx.heading,
       half: { a: 20, y: 20, z: 20 },
       data: {},
       mesh: new THREE.Group(),
+      frame: new THREE.Group(),
       shadow: createShadow(1),
     }
     def.setup(h, ctx)
-    // Push past the spawn line by the hazard's own half-length so it never pops in on screen.
-    h.pos.a += h.half.a
+    // Past the spawn line by the hazard's own half-length so it never pops in on screen.
+    const ahead = SPAWN.ahead + h.half.a
+    const lateral = (ctx.rand() * 2 - 1) * SPAWN.lateral
+    forward(ctx.heading, fwd)
+    right(ctx.heading, side)
+    h.pos.x = ctx.fish.x + fwd.x * ahead + side.x * lateral
+    h.pos.z = ctx.fish.z + fwd.z * ahead + side.z * lateral
+    // Only inside the glass, and clear of the mound in the middle.
+    const r = fromCentre(h.pos)
+    const reach = Math.max(h.half.a, h.half.z)
+    if (r > TANK.radius - SPAWN.glassClearance - reach || r < TANK.mound.radius + reach + 40) return false
+
+    this.lastSpawn.set(def.id, this.clock)
     h.mesh = def.build(h)
-    toWorld(h.pos, h.mesh.position)
+    h.frame.add(h.mesh)
+    toWorld(h.pos, h.frame.position)
+    h.frame.rotation.y = h.heading
     h.shadow.userData.radius = Math.max(h.half.a, h.half.z) * 1.1
-    this.group.add(h.mesh, h.shadow)
+    this.group.add(h.frame, h.shadow)
     this.live.push(h)
+    return true
   }
 }
 

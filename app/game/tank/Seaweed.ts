@@ -6,14 +6,12 @@ import { TANK } from '../constants'
  *
  * One shared ribbon geometry is instanced hundreds of times; each instance
  * carries its base position, size, sway and colour. The vertex shader tapers
- * and bends each blade (more toward the tip, on two overlapping waves, leaning
- * with the current) and scrolls it with the world, wrapping along the tank —
- * so the whole bed is one draw call with no per-frame CPU work.
+ * and bends each blade (more toward the tip, on two overlapping waves) and
+ * turns it to face the camera — so the whole tank's worth is one draw call
+ * with no per-frame CPU work.
  */
 
-const H = TANK.height
-const D = TANK.depth
-const LEN = TANK.maxA - TANK.minA
+const R = TANK.radius
 
 /** Deterministic pseudo-random, so the bed is laid out the same every load. */
 function rng(seed: number) {
@@ -62,18 +60,14 @@ const SWAY_GLSL = /* glsl */ `
   attribute vec4 aShape; // height, width, sway, phase
   attribute vec4 aTint;  // rgb (linear), wavy edge
   uniform float uTime;
-  uniform float uScroll;
-  uniform float uFlow;
-  uniform float uMinX;
-  uniform float uLen;
-  uniform float uRear; // 0..1: how far blades have turned to face the rear camera
+  uniform float uYaw; // the camera's heading (tank/space.ts)
   varying vec3 vTint;
   varying float vH;
   varying float vAcross;
 
-  // Blades mostly face the side cameras; in rear view they turn most of the way
-  // toward the camera looking down the tank, so they don't read as edge-on sticks.
-  float bladeYaw() { return mix(aBase.z, 1.5708 + (aBase.z - 1.5708) * 0.25, uRear); }
+  // Blades turn most of the way toward the chase camera, whichever way it
+  // faces, so they don't read as edge-on sticks.
+  float bladeYaw() { return 1.5708 - uYaw + (aBase.z - 1.5708) * 0.25; }
 
   vec3 bladeOffset(vec3 p) {
     float h = p.y;
@@ -86,7 +80,7 @@ const SWAY_GLSL = /* glsl */ `
     float t = uTime * 1.1 + aShape.w;
     float swayX = (sin(t + h * 2.2) * 0.7 + sin(t * 1.9 + h * 4.0) * 0.3) * aShape.z;
     float swayZ = cos(t * 0.8 + h * 1.7) * aShape.z * 0.6;
-    float lean = -uFlow * 0.12 + aBase.w; // lean downstream with the current
+    float lean = aBase.w;
     return across + vec3((swayX + lean) * bend, h * aShape.x, swayZ * bend);
   }
 `
@@ -98,9 +92,7 @@ function patchVertex(shader: { vertexShader: string, uniforms: Record<string, TH
     .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
       objectNormal = vec3(-sin(bladeYaw()), 0.0, cos(bladeYaw()));`)
     .replace('#include <begin_vertex>', `#include <begin_vertex>
-      // Scroll with the world and wrap along the tank.
-      float baseX = mod(aBase.x - uScroll - uMinX, uLen) + uMinX;
-      transformed = vec3(baseX, 0.0, aBase.y) + bladeOffset(position);
+      transformed = vec3(aBase.x, 0.0, aBase.y) + bladeOffset(position);
       vTint = aTint.rgb;
       vH = position.y;
       vAcross = position.x;`)
@@ -110,11 +102,7 @@ export class Seaweed {
   readonly mesh: THREE.Mesh
   private uniforms = {
     uTime: { value: 0 },
-    uScroll: { value: 0 },
-    uFlow: { value: 1 },
-    uMinX: { value: TANK.minA },
-    uLen: { value: LEN },
-    uRear: { value: 1 },
+    uYaw: { value: 0 },
   }
 
   constructor() {
@@ -126,39 +114,45 @@ export class Seaweed {
     const tint: number[] = []
     const r = rng(17)
     const range = ([a, b]: [number, number]) => a + r() * (b - a)
-    const plant = (kind: Kind, z0: number, z1: number, maxHeight = Infinity) => {
-      const x = TANK.minA + r() * LEN
-      const z = z0 + r() * (z1 - z0)
+    /** A clump at (x, z) on the sand. */
+    const plant = (kind: Kind, x: number, z: number, maxHeight = Infinity) => {
       const count = Math.round(range(kind.blades))
       const t = kind.tints[Math.floor(r() * kind.tints.length)]!
       for (let i = 0; i < count; i++) {
         const a = r() * Math.PI * 2
         const d = Math.sqrt(r()) * kind.spread
-        // Most blades face the side cameras so they read broad, not as sticks;
-        // the rest are random so top-down and rear views still look natural.
-        const yaw = r() < 0.7 ? (r() - 0.5) * 1.0 : r() * Math.PI
-        base.push(x + Math.cos(a) * d, z + Math.sin(a) * d * 0.6, yaw, (r() - 0.5) * 0.2)
+        base.push(x + Math.cos(a) * d, z + Math.sin(a) * d, r() * Math.PI, (r() - 0.5) * 0.2)
         shape.push(Math.min(maxHeight, range(kind.height)), range(kind.width) * 1.12, kind.sway * (0.7 + r() * 0.6), r() * Math.PI * 2)
         const v = 0.85 + r() * 0.3
         tint.push(t[0] * v, t[1] * v, t[2] * v, kind.wave)
       }
     }
-    // Back of the bed (either long wall): tall kelp among grass, lettuce and red accents.
-    for (const side of [-1, 1]) {
-      const z0 = side * (D / 2 - 12)
-      const z1 = side * (D / 2 - 135)
-      for (let i = 0; i < 14; i++) plant(KINDS.kelp, z0, z1)
-      for (let i = 0; i < 19; i++) plant(KINDS.seagrass, z0, z1)
-      for (let i = 0; i < 8; i++) plant(KINDS.lettuce, z0, z1)
-      for (let i = 0; i < 5; i++) plant(KINDS.red, z0, z1)
+    /** A point `dist` from the centre, at a random angle. */
+    const at = (dist: number): [number, number] => {
+      const a = r() * Math.PI * 2
+      return [Math.cos(a) * dist, Math.sin(a) * dist]
     }
-    // A low fringe right against the glass, to frame the foreground without
-    // hiding the fish's lane.
-    for (const side of [-1, 1]) {
-      const z0 = side * (D / 2 - 10)
-      const z1 = side * (D / 2 - 45)
-      for (let i = 0; i < 8; i++) plant(KINDS.seagrass, z0, z1, 62)
-      for (let i = 0; i < 4; i++) plant(KINDS.lettuce, z0, z1, 45)
+    // Meadows scattered over the sand: patches of grass, lettuce and red algae
+    // with the odd kelp, leaving open sand between them.
+    for (let m = 0; m < 70; m++) {
+      const [cx, cz] = at(TANK.mound.radius + 250 + Math.sqrt(r()) * (R - TANK.mound.radius - 500))
+      const clumps = 3 + Math.floor(r() * 5)
+      for (let i = 0; i < clumps; i++) {
+        const [ox, oz] = [(r() - 0.5) * 220, (r() - 0.5) * 220]
+        const roll = r()
+        const kind = roll < 0.55 ? KINDS.seagrass : roll < 0.75 ? KINDS.lettuce : roll < 0.9 ? KINDS.red : KINDS.kelp
+        plant(kind, cx + ox, cz + oz)
+      }
+    }
+    // A kelp forest round the foot of the glass, framing the tank's edge.
+    for (let i = 0; i < 140; i++) {
+      const [x, z] = at(R - 40 - r() * 180)
+      plant(r() < 0.5 ? KINDS.kelp : KINDS.seagrass, x, z)
+    }
+    // And a ring round the mound.
+    for (let i = 0; i < 26; i++) {
+      const [x, z] = at(TANK.mound.radius * (0.85 + r() * 0.35))
+      plant(r() < 0.4 ? KINDS.kelp : r() < 0.7 ? KINDS.seagrass : KINDS.red, x, z)
     }
 
     geometry.setAttribute('aBase', new THREE.InstancedBufferAttribute(new Float32Array(base), 4))
@@ -196,10 +190,10 @@ export class Seaweed {
     this.mesh.userData.depthMaterial = depth
   }
 
-  /** `scroll` is total world travel. */
-  update(time: number, scroll: number) {
+  /** `yaw`: the camera's heading, which blades turn to face. */
+  update(time: number, yaw: number) {
     this.uniforms.uTime.value = time
-    this.uniforms.uScroll.value = scroll
+    this.uniforms.uYaw.value = yaw
   }
 }
 

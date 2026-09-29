@@ -1,33 +1,34 @@
 import * as THREE from 'three'
 import { COLORS, TANK } from '../constants'
 import { excludeFromDepth } from '../engine/RenderPipeline'
+import { rockGeos, rockMat } from '../hazards/registry'
 import { Seaweed } from './Seaweed'
+import type { TankPoint } from './space'
 import { backdropTexture, bubbleTexture, causticsTexture, sandTexture } from './textures'
 
-const LEN = TANK.maxA - TANK.minA
-const MID_X = (TANK.minA + TANK.maxA) / 2
+const R = TANK.radius
 const H = TANK.height
-const D = TANK.depth
 const SAND_TILE = 256
 const CAUSTIC_TILE = 300
-const BACKDROP_TILE = 1024
+/** The painted reef repeats a whole number of times round the wall, so there's no seam. */
+const BACKDROP_REPEATS = 18
+const BUBBLES = 160
+/** Bubbles only exist within this distance of the fish; far ones are recycled nearby. */
+const BUBBLE_RANGE = 1400
 
 /**
- * The aquarium: a fixed glass box the camera orbits. The fish never really
- * moves forward — the floor, backdrop, weeds and bubbles scroll past instead.
+ * The aquarium: a giant round glass tank, standing still while the fish swims
+ * round it. Sand with rippling light, a painted reef on the inside of the
+ * glass, a surface overhead, seaweed meadows and a reef mound in the middle.
  */
 export class Tank {
   readonly group = new THREE.Group()
-  private sand: THREE.Texture
   private caustics: THREE.Texture
-  /** One per long wall: [back, front]. The front one runs mirrored. */
-  private backdrops: THREE.Texture[] = []
   private seaweed = new Seaweed()
-  /** Total world travel, for anything scrolled in a shader. */
-  private scroll = 0
   private bubbles: THREE.Points
   private bubbleRise: Float32Array
   private time = 0
+  private rand = mulberry(11)
 
   constructor(scene: THREE.Scene) {
     scene.add(this.group)
@@ -38,143 +39,155 @@ export class Tank {
     const sun = new THREE.DirectionalLight(0xffffff, 2.6)
     sun.position.set(200, 1200, 500)
     this.group.add(sun)
-    // Fill from the front glass so the side views aren't lit only from above.
-    const fill = new THREE.DirectionalLight(0xbfe6ff, 1.2)
-    fill.position.set(300, 300, 1200)
+    // A soft fill from low down, so the sides of things aren't lit only from above.
+    const fill = new THREE.DirectionalLight(0xbfe6ff, 1.0)
+    fill.position.set(-600, 300, -900)
     this.group.add(fill)
 
     // ---- Seabed --------------------------------------------------------------
-    this.sand = sandTexture()
-    this.sand.repeat.set(LEN / SAND_TILE, D / SAND_TILE)
+    const sand = sandTexture()
+    sand.repeat.set((2 * R) / SAND_TILE, (2 * R) / SAND_TILE)
     const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(LEN, D),
-      new THREE.MeshStandardMaterial({ map: this.sand, roughness: 1 }),
+      new THREE.CircleGeometry(R + 4, 160),
+      new THREE.MeshStandardMaterial({ map: sand, roughness: 1 }),
     )
     floor.rotation.x = -Math.PI / 2
-    floor.position.set(MID_X, 0, 0)
     this.group.add(floor)
 
     this.caustics = causticsTexture()
-    this.caustics.repeat.set(LEN / CAUSTIC_TILE, D / CAUSTIC_TILE)
+    this.caustics.repeat.set((2 * R) / CAUSTIC_TILE, (2 * R) / CAUSTIC_TILE)
     const causticPlane = new THREE.Mesh(
-      new THREE.PlaneGeometry(LEN, D),
+      new THREE.CircleGeometry(R, 160),
       new THREE.MeshBasicMaterial({
         map: this.caustics, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending, depthWrite: false,
       }),
     )
     causticPlane.rotation.x = -Math.PI / 2
-    causticPlane.position.set(MID_X, 1, 0)
+    causticPlane.position.y = 1
     excludeFromDepth(causticPlane)
     this.group.add(causticPlane)
 
-    // ---- Long walls: a painted reef facing *into* the tank on both sides ----
-    // Single-sided, so the wall nearest an outside camera is culled and you
-    // see through its glass; the far wall always shows reef behind the fish.
-    // From the inside (rear view) both walls show, making a reef corridor.
-    const backdropSrc = backdropTexture()
-    for (const side of [-1, 1]) {
-      const tex = side < 0 ? backdropSrc : backdropSrc.clone()
-      tex.wrapT = THREE.ClampToEdgeWrapping
-      tex.repeat.set(LEN / BACKDROP_TILE, 1)
-      tex.offset.x = side < 0 ? 0 : 0.37 // don't mirror the same reef exactly
-      const wall = new THREE.Mesh(new THREE.PlaneGeometry(LEN, H), new THREE.MeshBasicMaterial({ map: tex }))
-      wall.position.set(MID_X, H / 2, (side * D) / 2)
-      if (side > 0) wall.rotation.y = Math.PI // face back into the tank
-      this.group.add(wall)
-      this.backdrops.push(tex)
+    // ---- The wall: a painted reef on the inside of the glass, all the way round ----
+    const backdrop = backdropTexture()
+    backdrop.wrapT = THREE.ClampToEdgeWrapping
+    backdrop.repeat.set(BACKDROP_REPEATS, 1)
+    const wall = new THREE.Mesh(
+      new THREE.CylinderGeometry(R, R, H, 256, 1, true),
+      // Seen from inside, so it's the cylinder's back faces that show.
+      new THREE.MeshBasicMaterial({ map: backdrop, side: THREE.BackSide }),
+    )
+    wall.position.y = H / 2
+    this.group.add(wall)
 
-      const glass = new THREE.Mesh(
-        new THREE.PlaneGeometry(LEN, H),
-        // Opacities here are tuned for linear-space blending (see engine/RenderPipeline.ts).
-        new THREE.MeshBasicMaterial({ color: COLORS.glass, transparent: true, opacity: 0.025, depthWrite: false, side: THREE.DoubleSide }),
-      )
-      glass.position.set(MID_X, H / 2, side * (D / 2 + 2))
-      excludeFromDepth(glass)
-      this.group.add(glass)
-    }
-
-    // End walls in deep-water colour, facing inward, so a camera looking down
-    // the tank's length (mid-turn, or rear view) sees murk rather than the room.
-    const endMat = new THREE.MeshBasicMaterial({ color: COLORS.deepWater })
-    for (const [x, rot] of [[TANK.minA, Math.PI / 2], [TANK.maxA, -Math.PI / 2]] as const) {
-      const end = new THREE.Mesh(new THREE.PlaneGeometry(D, H), endMat)
-      end.position.set(x, H / 2, 0)
-      end.rotation.y = rot
-      this.group.add(end)
-    }
+    const glass = new THREE.Mesh(
+      new THREE.CylinderGeometry(R - 2, R - 2, H, 256, 1, true),
+      // Opacities here are tuned for linear-space blending (see engine/RenderPipeline.ts).
+      new THREE.MeshBasicMaterial({ color: COLORS.glass, transparent: true, opacity: 0.025, depthWrite: false, side: THREE.DoubleSide }),
+    )
+    glass.position.y = H / 2
+    excludeFromDepth(glass)
+    this.group.add(glass)
 
     // ---- Surface, rims ---------------------------------------------------------
-
     const surface = new THREE.Mesh(
-      new THREE.PlaneGeometry(LEN, D),
+      new THREE.CircleGeometry(R, 160),
       // A light tint; blob shadows (tank/shadow.ts) do the work of separating things from the sand.
       new THREE.MeshBasicMaterial({ color: 0x3aa6dc, transparent: true, opacity: 0.09, depthWrite: false, side: THREE.DoubleSide }),
     )
     surface.rotation.x = -Math.PI / 2
-    surface.position.set(MID_X, H, 0)
+    surface.position.y = H
     excludeFromDepth(surface)
     this.group.add(surface)
 
     const rimMat = new THREE.MeshStandardMaterial({ color: 0x1b2733, roughness: 0.6 })
-    const rimGeo = new THREE.BoxGeometry(LEN, 10, 10)
+    const rimGeo = new THREE.TorusGeometry(R, 6, 8, 256)
     for (const y of [0, H]) {
-      for (const z of [-D / 2, D / 2]) {
-        const rim = new THREE.Mesh(rimGeo, rimMat)
-        rim.position.set(MID_X, y, z)
-        this.group.add(rim)
-      }
+      const rim = new THREE.Mesh(rimGeo, rimMat)
+      rim.rotation.x = Math.PI / 2
+      rim.position.y = y
+      this.group.add(rim)
     }
+
+    // ---- The mound: a low reef outcrop in the middle -----------------------------
+    this.group.add(buildMound())
 
     // ---- Seaweed: instanced 3D blades (see Seaweed.ts) ------------------------
     this.group.add(this.seaweed.mesh)
-    const r = mulberry(11)
 
-    // ---- Bubbles -------------------------------------------------------------
-    const count = 160
-    const pos = new Float32Array(count * 3)
-    this.bubbleRise = new Float32Array(count)
-    for (let i = 0; i < count; i++) {
-      pos[i * 3] = TANK.minA + r() * LEN
-      pos[i * 3 + 1] = r() * H
-      pos[i * 3 + 2] = (r() - 0.5) * D
-      this.bubbleRise[i] = 30 + r() * 60
+    // ---- Bubbles, drifting up around the fish -----------------------------------
+    const pos = new Float32Array(BUBBLES * 3)
+    this.bubbleRise = new Float32Array(BUBBLES)
+    for (let i = 0; i < BUBBLES; i++) {
+      this.placeBubble(pos, i, { x: 0, y: 0, z: R * 0.55 })
+      pos[i * 3 + 1] = this.rand() * H
+      this.bubbleRise[i] = 30 + this.rand() * 60
     }
     const bubbleGeo = new THREE.BufferGeometry()
     bubbleGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
     this.bubbles = new THREE.Points(bubbleGeo, new THREE.PointsMaterial({
       map: bubbleTexture(), size: 9, transparent: true, depthWrite: false, opacity: 0.8,
     }))
+    this.bubbles.frustumCulled = false // they follow the fish around
     excludeFromDepth(this.bubbles)
     this.group.add(this.bubbles)
   }
 
-  update(dt: number, speed: number) {
-    const step = speed * dt
+  /** Whether a box at `pos` (half-extents `half`) touches the mound. */
+  hitsMound(pos: TankPoint, half: { a: number, y: number }) {
+    return Math.hypot(pos.x, pos.z) < TANK.mound.radius * 0.85 + half.a && pos.y - half.y < TANK.mound.height
+  }
+
+  /** `viewYaw`: the camera's heading, which the seaweed turns to face. */
+  update(dt: number, fish: TankPoint, viewYaw: number) {
     this.time += dt
-
-    this.sand.offset.x += step / SAND_TILE
-    this.caustics.offset.x += (step * 0.8) / CAUSTIC_TILE
-    this.caustics.offset.y += dt * 0.04
-    // The front wall's plane is turned around, so its texture runs the other way.
-    this.backdrops[0]!.offset.x += (step * 0.3) / BACKDROP_TILE
-    this.backdrops[1]!.offset.x -= (step * 0.3) / BACKDROP_TILE
-
-    this.scroll += step
-    this.seaweed.update(this.time, this.scroll)
+    // The light on the sand drifts slowly, like sun through moving water.
+    this.caustics.offset.x = this.time * 0.013
+    this.caustics.offset.y = this.time * 0.04
+    this.seaweed.update(this.time, viewYaw)
 
     const attr = this.bubbles.geometry.getAttribute('position') as THREE.BufferAttribute
     const arr = attr.array as Float32Array
     for (let i = 0; i < this.bubbleRise.length; i++) {
-      let x = arr[i * 3]! - step * 0.9
-      let y = arr[i * 3 + 1]! + this.bubbleRise[i]! * dt
-      if (x < TANK.minA) x += LEN
-      else if (x > TANK.maxA) x -= LEN
-      if (y > H) y = 0
-      arr[i * 3] = x
-      arr[i * 3 + 1] = y
+      const y = arr[i * 3 + 1]! + this.bubbleRise[i]! * dt
+      arr[i * 3 + 1] = y > H ? 0 : y
+      if (Math.hypot(arr[i * 3]! - fish.x, arr[i * 3 + 2]! - fish.z) > BUBBLE_RANGE) this.placeBubble(arr, i, fish)
     }
     attr.needsUpdate = true
   }
+
+  /** Put bubble `i` somewhere near the fish, inside the glass, at a random height. */
+  private placeBubble(arr: Float32Array, i: number, fish: TankPoint) {
+    const a = this.rand() * Math.PI * 2
+    const d = Math.sqrt(this.rand()) * BUBBLE_RANGE * 0.95
+    let x = fish.x + Math.cos(a) * d
+    let z = fish.z + Math.sin(a) * d
+    const r = Math.hypot(x, z)
+    if (r > R - 20) {
+      x *= (R - 20) / r
+      z *= (R - 20) / r
+    }
+    arr[i * 3] = x
+    arr[i * 3 + 1] = this.rand() * H
+    arr[i * 3 + 2] = z
+  }
+}
+
+/** A cluster of big rocks in the middle of the tank, lower toward its edge. */
+function buildMound() {
+  const g = new THREE.Group()
+  const r = mulberry(5)
+  const { radius, height } = TANK.mound
+  for (let i = 0; i < 16; i++) {
+    const d = Math.sqrt(r()) * radius * 0.8
+    const a = r() * Math.PI * 2
+    const size = (1 - (d / radius) * 0.6) * (60 + r() * 50)
+    const m = new THREE.Mesh(rockGeos[Math.floor(r() * rockGeos.length)]!, rockMat)
+    m.scale.set(size * (1 + r() * 0.4), Math.min(height, size * (0.7 + r() * 0.6)), size * (1 + r() * 0.4))
+    m.position.set(Math.cos(a) * d, m.scale.y * 0.35, Math.sin(a) * d)
+    m.rotation.y = r() * Math.PI * 2
+    g.add(m)
+  }
+  return g
 }
 
 function mulberry(seed: number) {
