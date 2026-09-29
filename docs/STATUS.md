@@ -17,6 +17,11 @@ _Last updated: 2026-09-25_
 > and the mound bump you back (mirroring your heading) and cost a life; a "Glass ahead!"
 > banner shows 1.6 s before you'd hit it. Hazards spawn ahead of the fish within the tank and
 > live in their own frame, turned to the heading they spawned with. **Fishing hooks are gone.**
+> **Scenery pass done:** `tank/Reef.ts` scatters ~280 reef patches plus loose stones over the
+> sand (rock clusters, brain/table/staghorn corals, tube sponges, cut-out sea fans; ~3,400
+> instances in 9 instanced draws, all purely decorative and under ~110 units tall).
+> `tank/Water.ts` keeps sun shafts (additive, hand-faded by distance) and drifting specks
+> around the fish. Fog is thicker (250–1800). No measurable GPU cost (~10–11 ms here).
 > Next: proper spawning (step 2), walls/big rocks that force turns (step 3), phone tilt (step 4).
 > Sections 2, 3, 8 and 9 below still describe the pre-refactor game. That version is saved as
 > branch `_version/alpha` and tag `alpha`.

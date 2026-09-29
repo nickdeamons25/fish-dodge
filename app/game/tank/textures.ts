@@ -106,3 +106,90 @@ export function bubbleTexture() {
     c.fill()
   }, false)
 }
+
+/**
+ * A gorgonian sea fan, white on transparent (tinted per instance): a fan of
+ * forking branches from a short stem, knitted together by a fine lattice.
+ * Used as a cut-out, so it has real holes.
+ */
+export function seaFanTexture() {
+  const S = 256
+  return canvasTexture(S, S, (c) => {
+    const r = rng(13)
+    c.strokeStyle = '#ffffff'
+    c.lineCap = 'round'
+    const tips: [number, number][] = []
+    const branch = (x: number, y: number, angle: number, len: number, width: number, depth: number) => {
+      const x2 = x + Math.cos(angle) * len
+      const y2 = y - Math.sin(angle) * len
+      c.lineWidth = width
+      c.beginPath()
+      c.moveTo(x, y)
+      c.lineTo(x2, y2)
+      c.stroke()
+      if (depth === 0) {
+        tips.push([x2, y2])
+        return
+      }
+      for (const turn of [-1, 1]) branch(x2, y2, angle + turn * (0.25 + r() * 0.2), len * (0.72 + r() * 0.1), width * 0.72, depth - 1)
+    }
+    // The stem.
+    c.lineWidth = 7
+    c.beginPath()
+    c.moveTo(S / 2, S - 4)
+    c.lineTo(S / 2, S - 38)
+    c.stroke()
+    for (const a of [0.55, 0.9, 1.25, 1.57, 1.9, 2.25, 2.6]) branch(S / 2, S - 36, a, 30 + r() * 10, 4.5, 4)
+    // The lattice: fine threads joining neighbouring branches across the fan.
+    c.lineWidth = 1.4
+    for (let ring = 0; ring < 9; ring++) {
+      const d = 50 + ring * 22
+      c.beginPath()
+      for (let a = 0.45; a <= 2.7; a += 0.05) {
+        const x = S / 2 + Math.cos(a) * d * (0.98 + r() * 0.04)
+        const y = S - 36 - Math.sin(a) * d * (0.98 + r() * 0.04)
+        if (a === 0.45) c.moveTo(x, y)
+        else c.lineTo(x, y)
+      }
+      c.stroke()
+    }
+    // Trim the lattice to the fan's outline, so no threads dangle past the tips.
+    c.globalCompositeOperation = 'destination-in'
+    c.beginPath()
+    c.moveTo(S / 2, S)
+    for (const [x, y] of [...tips].sort((p, q) => Math.atan2(S - 36 - q[1], q[0] - S / 2) - Math.atan2(S - 36 - p[1], p[0] - S / 2))) c.lineTo(x, y)
+    c.closePath()
+    c.fill()
+  }, false)
+}
+
+/** A shaft of sunlight: bright at the top, fading out toward the sand, soft at the edges. */
+export function sunShaftTexture() {
+  return canvasTexture(64, 256, (c) => {
+    const down = c.createLinearGradient(0, 0, 0, 256)
+    down.addColorStop(0, 'rgba(255,255,255,1)')
+    down.addColorStop(0.55, 'rgba(255,255,255,0.45)')
+    down.addColorStop(1, 'rgba(255,255,255,0)')
+    c.fillStyle = down
+    c.fillRect(0, 0, 64, 256)
+    // Feather the sides.
+    c.globalCompositeOperation = 'destination-in'
+    const across = c.createLinearGradient(0, 0, 64, 0)
+    across.addColorStop(0, 'rgba(0,0,0,0)')
+    across.addColorStop(0.5, 'rgba(0,0,0,1)')
+    across.addColorStop(1, 'rgba(0,0,0,0)')
+    c.fillStyle = across
+    c.fillRect(0, 0, 64, 256)
+  }, false)
+}
+
+/** A soft round speck for drifting particles in the water. */
+export function speckTexture() {
+  return canvasTexture(16, 16, (c) => {
+    const g = c.createRadialGradient(8, 8, 0, 8, 8, 8)
+    g.addColorStop(0, 'rgba(255,255,255,1)')
+    g.addColorStop(1, 'rgba(255,255,255,0)')
+    c.fillStyle = g
+    c.fillRect(0, 0, 16, 16)
+  }, false)
+}

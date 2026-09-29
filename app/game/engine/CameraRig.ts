@@ -15,9 +15,9 @@ const CHASE = {
   ahead: 500,
   targetY: H * 0.42,
   fov: 62,
-  /** Short murk ahead; far enough that the glass looms out of it before you reach it. */
-  fogNear: 500,
-  fogFar: 2200,
+  /** Thick water: things fade from quite close, but the glass still looms out of it before you reach it. */
+  fogNear: 250,
+  fogFar: 1800,
   /** How quickly the camera's yaw catches up with the fish's heading, per second. The lag is what lets you see yourself turn. */
   yawRate: 3,
   /** Keep the camera this far inside the glass. */

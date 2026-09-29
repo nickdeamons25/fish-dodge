@@ -2,9 +2,11 @@ import * as THREE from 'three'
 import { COLORS, TANK } from '../constants'
 import { excludeFromDepth } from '../engine/RenderPipeline'
 import { rockGeos, rockMat } from '../hazards/registry'
+import { buildReef } from './Reef'
 import { Seaweed } from './Seaweed'
 import type { TankPoint } from './space'
 import { backdropTexture, bubbleTexture, causticsTexture, sandTexture } from './textures'
+import { Water } from './Water'
 
 const R = TANK.radius
 const H = TANK.height
@@ -19,12 +21,14 @@ const BUBBLE_RANGE = 1400
 /**
  * The aquarium: a giant round glass tank, standing still while the fish swims
  * round it. Sand with rippling light, a painted reef on the inside of the
- * glass, a surface overhead, seaweed meadows and a reef mound in the middle.
+ * glass, a surface overhead, reef patches and seaweed meadows over the sand,
+ * a reef mound in the middle, and sun shafts and drifting specks in the water.
  */
 export class Tank {
   readonly group = new THREE.Group()
   private caustics: THREE.Texture
   private seaweed = new Seaweed()
+  private water = new Water()
   private bubbles: THREE.Points
   private bubbleRise: Float32Array
   private time = 0
@@ -114,6 +118,9 @@ export class Tank {
     // ---- Seaweed: instanced 3D blades (see Seaweed.ts) ------------------------
     this.group.add(this.seaweed.mesh)
 
+    // ---- Reef patches over the sand, and the water's light and particles --------
+    this.group.add(buildReef(), this.water.group)
+
     // ---- Bubbles, drifting up around the fish -----------------------------------
     const pos = new Float32Array(BUBBLES * 3)
     this.bubbleRise = new Float32Array(BUBBLES)
@@ -144,6 +151,7 @@ export class Tank {
     this.caustics.offset.x = this.time * 0.013
     this.caustics.offset.y = this.time * 0.04
     this.seaweed.update(this.time, viewYaw)
+    this.water.update(dt, fish, viewYaw)
 
     const attr = this.bubbles.geometry.getAttribute('position') as THREE.BufferAttribute
     const arr = attr.array as Float32Array
